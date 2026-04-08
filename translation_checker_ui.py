@@ -11,9 +11,11 @@ from check_excel_translations import (
     STATUS_EMPTY,
     STATUS_OK,
     STATUS_SUSPECT,
+    default_prompt_path,
     default_output_path,
     default_input_path,
     get_workbook_sheet_names,
+    load_prompt_template,
     process_workbook,
 )
 
@@ -29,14 +31,15 @@ class TranslationCheckerApp:
         self.worker: threading.Thread | None = None
 
         self.task_var = tk.StringVar(value="French translation English leak check")
-        self.input_var = tk.StringVar(value=str(default_input_path()))
-        self.output_var = tk.StringVar(value=str(default_output_path(default_input_path())))
+        self.input_var = tk.StringVar(value="")
+        self.output_var = tk.StringVar(value="")
         self.sheet_var = tk.StringVar(value="Sheet1")
         self.source_col_var = tk.StringVar(value="C")
         self.result_col_var = tk.StringVar(value="F")
         self.start_row_var = tk.StringVar(value="2")
         self.model_var = tk.StringVar(value="gemma4:e4b")
         self.api_url_var = tk.StringVar(value="http://127.0.0.1:11434")
+        self.prompt_file_var = tk.StringVar(value=str(default_prompt_path()))
         self.status_var = tk.StringVar(value="Ready")
 
         self._build_ui()
@@ -114,6 +117,11 @@ class TranslationCheckerApp:
         ttk.Entry(advanced, textvariable=self.model_var).grid(row=0, column=1, sticky="ew")
         ttk.Label(advanced, text="API URL").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
         ttk.Entry(advanced, textvariable=self.api_url_var).grid(row=1, column=1, sticky="ew", pady=(10, 0))
+        ttk.Label(advanced, text="Prompt file").grid(row=2, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
+        ttk.Entry(advanced, textvariable=self.prompt_file_var).grid(row=2, column=1, sticky="ew", pady=(10, 0))
+        ttk.Button(advanced, text="Browse...", command=self._choose_prompt_file).grid(
+            row=2, column=2, sticky="w", padx=(12, 0), pady=(10, 0)
+        )
 
         activity = ttk.LabelFrame(outer, text="Run", padding=12)
         activity.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
@@ -180,12 +188,31 @@ class TranslationCheckerApp:
         if self.sheet_var.get() not in sheets and sheets:
             self.sheet_var.set(sheets[0])
 
-    def _validate(self) -> tuple[Path, Path, int] | None:
+    def _choose_prompt_file(self) -> None:
+        chosen = filedialog.askopenfilename(
+            title="Select prompt file",
+            filetypes=[("Text files", "*.txt"), ("Markdown files", "*.md"), ("All files", "*.*")],
+        )
+        if chosen:
+            self.prompt_file_var.set(chosen)
+
+    def _validate(self) -> tuple[Path, Path, Path, int] | None:
         input_path = Path(self.input_var.get()).expanduser()
-        output_path = Path(self.output_var.get()).expanduser()
+        prompt_path = Path(self.prompt_file_var.get()).expanduser()
 
         if not input_path.exists():
             messagebox.showerror("Input error", "Please choose an existing Excel file.")
+            return None
+
+        output_text = self.output_var.get().strip()
+        output_path = (
+            Path(output_text).expanduser()
+            if output_text
+            else default_output_path(input_path)
+        )
+
+        if not prompt_path.exists():
+            messagebox.showerror("Prompt error", "Please choose an existing prompt file.")
             return None
 
         for label, value in (
@@ -206,7 +233,7 @@ class TranslationCheckerApp:
             messagebox.showerror("Row error", "Start row must be at least 1.")
             return None
 
-        return input_path.resolve(), output_path.resolve(), start_row
+        return input_path.resolve(), output_path.resolve(), prompt_path.resolve(), start_row
 
     def _set_running(self, running: bool) -> None:
         self.run_button.configure(state="disabled" if running else "normal")
@@ -219,7 +246,7 @@ class TranslationCheckerApp:
             messagebox.showinfo("Busy", "A check is already running.")
             return
 
-        input_path, output_path, start_row = validated
+        input_path, output_path, prompt_path, start_row = validated
         self._set_running(True)
         self.progress.configure(value=0, maximum=100)
         self.status_var.set("Running...")
@@ -230,20 +257,23 @@ class TranslationCheckerApp:
         self._append_log(f"Output: {output_path}")
         self._append_log(f"Sheet : {self.sheet_var.get()}")
         self._append_log(f"Model : {self.model_var.get()}")
+        self._append_log(f"Prompt: {prompt_path}")
 
         self.worker = threading.Thread(
             target=self._run_worker,
-            args=(input_path, output_path, start_row),
+            args=(input_path, output_path, prompt_path, start_row),
             daemon=True,
         )
         self.worker.start()
 
-    def _run_worker(self, input_path: Path, output_path: Path, start_row: int) -> None:
+    def _run_worker(self, input_path: Path, output_path: Path, prompt_path: Path, start_row: int) -> None:
         try:
+            prompt_template = load_prompt_template(prompt_path)
             client = OllamaClient(
                 api_url=self.api_url_var.get().strip(),
                 model=self.model_var.get().strip(),
                 timeout=120.0,
+                prompt_template=prompt_template,
             )
             self.events.put(("log", "Checking local Ollama service..."))
             client.ensure_available()

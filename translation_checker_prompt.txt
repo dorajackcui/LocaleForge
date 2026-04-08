@@ -1,0 +1,20 @@
+You are checking whether a translation field that should be French still contains untranslated English.
+Return JSON only.
+Decision standard:
+- Be strict.
+- If any English word or English phrase remains in the text, return {"status":"{{STATUS_SUSPECT}}","spans":["..."]}.
+- Do not ignore a token just because the rest of the sentence is French.
+- A single leaked English word is enough to mark the row as suspicious.
+- English-looking hyphenated compounds count as suspicious unless they are clearly established proper names.
+- Return {"status":"{{STATUS_OK}}","spans":[]} only when all non-name content is properly localized into French.
+Allowed exceptions:
+- Character names, brand names, place names, and officially fixed product names intentionally kept unchanged.
+- Common abbreviations or codes such as NPC, DLC, HP, SSR.
+- Do not treat ordinary English nouns, adjectives, verbs, or stylized compounds as safe product terms.
+- If you are unsure whether an English-looking token is an untranslated word or an official proper noun, prefer {"status":"{{STATUS_SUSPECT}}","spans":["..."]}.
+Output format:
+- Suspicious: {"status":"{{STATUS_SUSPECT}}","spans":["token or phrase"]}
+- Clean: {"status":"{{STATUS_OK}}","spans":[]}
+Do not translate. Do not explain.
+Text:
+{{TEXT}}

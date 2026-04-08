@@ -23,6 +23,15 @@ STATUS_EMPTY = "EMPTY"
 STATUS_SUSPECT = "\u7591\u4f3c\u82f1\u6587\u672a\u7ffb\u8bd1"
 DEFAULT_INPUT_NAME = "\u670d\u88c5\u76f8\u5173.xlsx"
 DEFAULT_HEADER = "CheckResult"
+DEFAULT_PROMPT_FILE = "translation_checker_prompt.txt"
+PROMPT_STATUS_OK = "{{STATUS_OK}}"
+PROMPT_STATUS_SUSPECT = "{{STATUS_SUSPECT}}"
+PROMPT_TEXT = "{{TEXT}}"
+REQUIRED_PROMPT_MARKERS = (
+    PROMPT_STATUS_OK,
+    PROMPT_STATUS_SUSPECT,
+    PROMPT_TEXT,
+)
 
 FRENCH_MARKERS = {
     "alors",
@@ -137,10 +146,11 @@ ProgressCallback = Callable[[int, int, int, Dict[str, int]], None]
 
 
 class OllamaClient:
-    def __init__(self, api_url: str, model: str, timeout: float) -> None:
+    def __init__(self, api_url: str, model: str, timeout: float, prompt_template: str) -> None:
         self.api_url = api_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.prompt_template = prompt_template
         self.session = requests.Session() if requests is not None else None
 
     def ensure_available(self) -> None:
@@ -161,28 +171,7 @@ class OllamaClient:
             )
 
     def classify(self, text: str) -> ClassificationResult:
-        prompt = (
-            "You are checking whether a translation field that should be French still "
-            "contains untranslated English.\n"
-            "Return JSON only.\n"
-            "Decision standard:\n"
-            "- Be strict.\n"
-            f"- If any English word or English phrase remains in the text, return {{\"status\":\"{STATUS_SUSPECT}\",\"spans\":[\"...\"]}}.\n"
-            "- Do not ignore a token just because the rest of the sentence is French.\n"
-            "- A single leaked English word is enough to mark the row as suspicious.\n"
-            "- English-looking hyphenated compounds count as suspicious unless they are clearly established proper names.\n"
-            f"- Return {{\"status\":\"OK\",\"spans\":[]}} only when all non-name content is properly localized into French.\n"
-            "Allowed exceptions:\n"
-            "- Character names, brand names, place names, and officially fixed product names intentionally kept unchanged.\n"
-            "- Common abbreviations or codes such as NPC, DLC, HP, SSR.\n"
-            "- Do not treat ordinary English nouns, adjectives, verbs, or stylized compounds as safe product terms.\n"
-            f"- If you are unsure whether an English-looking token is an untranslated word or an official proper noun, prefer {{\"status\":\"{STATUS_SUSPECT}\",\"spans\":[\"...\"]}}.\n"
-            "Output format:\n"
-            f"- Suspicious: {{\"status\":\"{STATUS_SUSPECT}\",\"spans\":[\"token or phrase\"]}}\n"
-            "- Clean: {\"status\":\"OK\",\"spans\":[]}\n"
-            "Do not translate. Do not explain.\n"
-            f"Text:\n{text}"
-        )
+        prompt = render_prompt(self.prompt_template, text)
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -320,8 +309,42 @@ def default_input_path() -> Path:
     return preferred.resolve()
 
 
+def default_prompt_path() -> Path:
+    return Path(__file__).with_name(DEFAULT_PROMPT_FILE).resolve()
+
+
+def load_prompt_template(prompt_path: Path) -> str:
+    resolved = Path(prompt_path).expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Prompt file does not exist: {resolved}")
+
+    template = resolved.read_text(encoding="utf-8").strip()
+    if not template:
+        raise ValueError(f"Prompt file is empty: {resolved}")
+
+    missing = [marker for marker in REQUIRED_PROMPT_MARKERS if marker not in template]
+    if missing:
+        missing_list = ", ".join(missing)
+        raise ValueError(
+            f"Prompt file `{resolved}` is missing required placeholders: {missing_list}"
+        )
+    return template
+
+
 def default_output_path(input_path: Path) -> Path:
     return input_path.with_name(f"{input_path.stem}_checked{input_path.suffix}")
+
+
+def render_prompt(template: str, text: str) -> str:
+    prompt = template
+    replacements = {
+        PROMPT_STATUS_OK: STATUS_OK,
+        PROMPT_STATUS_SUSPECT: STATUS_SUSPECT,
+        PROMPT_TEXT: text,
+    }
+    for marker, value in replacements.items():
+        prompt = prompt.replace(marker, value)
+    return prompt
 
 
 def get_workbook_sheet_names(input_path: Path) -> list[str]:
@@ -446,6 +469,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ollama model name. Default: gemma4:e4b",
     )
     parser.add_argument(
+        "--prompt-file",
+        default=str(default_prompt_path()),
+        help="Path to the prompt template file.",
+    )
+    parser.add_argument(
         "--start-row",
         type=int,
         default=2,
@@ -475,18 +503,26 @@ def main() -> int:
         if args.output
         else default_output_path(input_path)
     )
+    prompt_path = Path(args.prompt_file).expanduser().resolve()
 
     if not input_path.exists():
         print(f"Input file does not exist: {input_path}", file=sys.stderr)
         return 1
 
-    client = OllamaClient(api_url=args.api_url, model=args.model, timeout=args.timeout)
+    prompt_template = load_prompt_template(prompt_path)
+    client = OllamaClient(
+        api_url=args.api_url,
+        model=args.model,
+        timeout=args.timeout,
+        prompt_template=prompt_template,
+    )
     client.ensure_available()
 
     print(f"Input : {input_path}")
     print(f"Output: {output_path}")
     print(f"Sheet : {args.sheet}")
     print(f"Model : {args.model}")
+    print(f"Prompt: {prompt_path}")
 
     total_rows, stats = process_workbook(
         input_path=input_path,

@@ -2,6 +2,8 @@
 
 LocaleForge is a local-first QA tool for localization teams. It checks Excel translation sheets for untranslated English that may have leaked into French localized content, using rule-based filtering plus a local Ollama model.
 
+The Ollama prompt is stored in a standalone template file so you can tune and debug it without editing Python source.
+
 ## Why LocaleForge
 
 - Keeps sensitive localization data on your machine
@@ -88,10 +90,17 @@ python .\check_excel_translations.py `
   --sheet "Sheet1" `
   --source-col "C" `
   --result-col "F" `
+  --prompt-file ".\translation_checker_prompt.txt" `
   --start-row 2 `
   --model "gemma4:e4b" `
   --api-url "http://127.0.0.1:11434"
 ```
+
+Prompt template notes:
+
+- Default file: `translation_checker_prompt.txt`
+- Required placeholders: `{{STATUS_OK}}`, `{{STATUS_SUSPECT}}`, `{{TEXT}}`
+- You can point the CLI to another prompt with `--prompt-file`
 
 ## Desktop UI
 
@@ -107,6 +116,7 @@ The UI lets you:
 - Select the worksheet
 - Configure source and output columns
 - Change the local model and Ollama API URL
+- Switch to a different prompt template file for prompt debugging
 - Run the check and review progress in a log panel
 
 ## Output
@@ -122,6 +132,7 @@ The original workbook is left unchanged. Results are saved to a new file ending 
 
 - [`check_excel_translations.py`](D:\e4b\check_excel_translations.py): CLI pipeline and Excel processing logic
 - [`translation_checker_ui.py`](D:\e4b\translation_checker_ui.py): Tkinter desktop UI
+- [`translation_checker_prompt.txt`](D:\e4b\translation_checker_prompt.txt): Prompt template used for Ollama requests
 - [`requirements.txt`](D:\e4b\requirements.txt): Python dependencies
 
 ## Roadmap
