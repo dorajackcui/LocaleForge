@@ -107,7 +107,7 @@ Prompt template notes:
 Launch the local desktop UI:
 
 ```powershell
-python .\translation_checker_ui.py
+python .\app.py
 ```
 
 The UI lets you:
@@ -131,7 +131,7 @@ The original workbook is left unchanged. Results are saved to a new file ending 
 ## Project Structure
 
 - [`check_excel_translations.py`](D:\e4b\check_excel_translations.py): CLI pipeline and Excel processing logic
-- [`translation_checker_ui.py`](D:\e4b\translation_checker_ui.py): Tkinter desktop UI
+- [`app.py`](D:\e4b\app.py): Tkinter desktop UI
 - [`translation_checker_prompt.txt`](D:\e4b\translation_checker_prompt.txt): Prompt template used for Ollama requests
 - [`requirements.txt`](D:\e4b\requirements.txt): Python dependencies
 
