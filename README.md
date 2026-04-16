@@ -1,36 +1,69 @@
 # LocaleForge
 
-LocaleForge is a local-first QA tool for localization teams. It checks Excel translation sheets for untranslated English that may have leaked into French localized content, using rule-based filtering plus a local Ollama model.
+LocaleForge is a local-first Excel QA tool for localization teams. It processes workbook rows with a local Ollama model and currently supports two tasks:
 
-The Ollama prompt is stored in a standalone template file so you can tune and debug it without editing Python source.
+- `english-check`: detect untranslated English leaking into French localized text
+- `term-extraction`: extract game-related terms from a text segment
+
+The prompts remain as standalone files at the repo root so you can tune them without editing Python modules.
 
 ## Why LocaleForge
 
 - Keeps sensitive localization data on your machine
-- Uses a local model instead of sending strings to a hosted API
-- Handles Excel-based review workflows that are common in game and product localization
-- Combines deterministic rules with model judgment so obvious cases stay fast
+- Uses a local model instead of a hosted API
+- Fits Excel-based review workflows common in localization pipelines
+- Separates task config, prompts, model integration, workbook logic, CLI, and UI for easier iteration
 
 ## What It Does
 
 - Reads an `.xlsx` workbook and processes a target worksheet
 - Inspects one source column, defaulting to column `C`
-- Writes the review result to a result column, defaulting to column `F`
-- Writes suspicious token spans to the next column, defaulting to column `G`
+- Writes a task result to a result column, defaulting to column `F`
+- Writes extracted spans or terms to the next column, defaulting to column `G`
 - Saves a new workbook instead of modifying the original file
 
-Current status values:
+Common status values:
 
 - `OK`
 - `EMPTY`
-- the suspicious untranslated-English label configured in the script
+- `疑似英文未翻译` for `english-check`
+- `提取到术语` for `term-extraction`
+
+## Tasks
+
+### `english-check`
+
+- Uses fast local rules to catch obvious empty or English-heavy rows
+- Sends borderline rows to Ollama for strict judgment
+- Writes suspicious untranslated tokens or phrases to the detail column
+
+Default files and headers:
+
+- Prompt: `translation_checker_prompt.txt`
+- Headers: `CheckResult` / `CheckResultSpans`
+
+### `term-extraction`
+
+- Sends every non-empty row to Ollama
+- Extracts game-related terms in any language
+- Writes the extracted terms to the detail column using ` | ` separators
+
+Default files and headers:
+
+- Prompt: `term_extractor_prompt.txt`
+- Headers: `TermExtractResult` / `ExtractedTerms`
 
 ## How It Works
 
-LocaleForge uses a two-stage pipeline:
+LocaleForge now uses a small internal package structure:
 
-1. Fast local rules catch obvious empty rows and English-heavy rows.
-2. Borderline rows are sent to a local Ollama model for a stricter decision.
+1. `localeforge.config.tasks` defines task ids, labels, statuses, headers, and defaults.
+2. `localeforge.prompts` resolves and validates prompt templates.
+3. `localeforge.model.ollama` handles Ollama availability checks and response parsing.
+4. `localeforge.rules` contains the English/French heuristic prechecks.
+5. `localeforge.workbook` handles workbook reading, row processing, cache reuse, and writeback.
+6. `localeforge.runtime` provides the shared task execution flow used by both CLI and UI.
+7. `localeforge.ui` contains the Tkinter app and UI-specific helpers.
 
 By default the tool expects:
 
@@ -46,7 +79,7 @@ LocaleForge is designed for local localization workflows.
 - Model calls go only to your local Ollama instance
 - Sensitive test files are excluded from Git with [`.gitignore`](D:\e4b\.gitignore)
 
-You should still review your local machine, model setup, and access controls based on your own security requirements.
+You should still review your local machine, model setup, and access controls for your own environment.
 
 ## Requirements
 
@@ -69,22 +102,29 @@ ollama serve
 
 ## CLI Usage
 
-Run with defaults:
+The user-facing entrypoint is unchanged:
 
 ```powershell
 python .\check_excel_translations.py
 ```
 
+Run term extraction:
+
+```powershell
+python .\check_excel_translations.py --task term-extraction
+```
+
 Run with explicit paths:
 
 ```powershell
-python .\check_excel_translations.py --input "D:\path\to\input.xlsx" --output "D:\path\to\input_checked.xlsx"
+python .\check_excel_translations.py --task term-extraction --input "D:\path\to\input.xlsx" --output "D:\path\to\input_checked.xlsx"
 ```
 
 Common options:
 
 ```powershell
 python .\check_excel_translations.py `
+  --task "english-check" `
   --input "D:\path\to\input.xlsx" `
   --output "D:\path\to\input_checked.xlsx" `
   --sheet "Sheet1" `
@@ -98,13 +138,15 @@ python .\check_excel_translations.py `
 
 Prompt template notes:
 
-- Default file: `translation_checker_prompt.txt`
+- English check default: `translation_checker_prompt.txt`
+- Term extraction default: `term_extractor_prompt.txt`
 - Required placeholders: `{{STATUS_OK}}`, `{{STATUS_SUSPECT}}`, `{{TEXT}}`
-- You can point the CLI to another prompt with `--prompt-file`
+- For `term-extraction`, `{{STATUS_SUSPECT}}` is mapped to `提取到术语`
+- You can override the default prompt with `--prompt-file`
 
 ## Desktop UI
 
-Launch the local desktop UI:
+The user-facing desktop entrypoint is also unchanged:
 
 ```powershell
 python .\app.py
@@ -114,30 +156,34 @@ The UI lets you:
 
 - Choose an Excel file
 - Select the worksheet
+- Switch between the two tasks
 - Configure source and output columns
 - Change the local model and Ollama API URL
-- Switch to a different prompt template file for prompt debugging
-- Run the check and review progress in a log panel
+- Use a different prompt template file for prompt debugging
+- Run the task and review progress in a log panel
+
+When you switch tasks, the prompt file auto-switches only if it is still using the previous task's default prompt.
 
 ## Output
 
 For each processed row, LocaleForge writes:
 
-- `CheckResult` in the result column
-- `CheckResultSpans` in the next column
+- A task status in the result column
+- A detail list in the next column
+
+Examples:
+
+- `english-check`: suspicious untranslated English spans
+- `term-extraction`: extracted game terms
 
 The original workbook is left unchanged. Results are saved to a new file ending in `_checked.xlsx` unless you provide another output path.
 
 ## Project Structure
 
-- [`check_excel_translations.py`](D:\e4b\check_excel_translations.py): CLI pipeline and Excel processing logic
-- [`app.py`](D:\e4b\app.py): Tkinter desktop UI
-- [`translation_checker_prompt.txt`](D:\e4b\translation_checker_prompt.txt): Prompt template used for Ollama requests
+- [`check_excel_translations.py`](D:\e4b\check_excel_translations.py): thin CLI wrapper
+- [`app.py`](D:\e4b\app.py): thin desktop wrapper
+- [`localeforge`](D:\e4b\localeforge): shared package for config, prompts, rules, runtime, model integration, workbook logic, and UI
+- [`translation_checker_prompt.txt`](D:\e4b\translation_checker_prompt.txt): English leak check prompt
+- [`term_extractor_prompt.txt`](D:\e4b\term_extractor_prompt.txt): Game term extraction prompt
+- [`tests`](D:\e4b\tests): unit tests for extracted modules and behavior-preserving workbook flows
 - [`requirements.txt`](D:\e4b\requirements.txt): Python dependencies
-
-## Roadmap
-
-- Support more localization target languages
-- Add configurable review labels and column mappings
-- Export reviewer summaries for production QA workflows
-- Improve model prompt tuning for game localization content

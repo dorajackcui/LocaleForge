@@ -1,0 +1,18 @@
+Extract game-related terms from this text.
+Return JSON only.
+
+Rules:
+- Extract only game terms that appear in the text. Terms may be in any language.
+- Prioritize skill names, system names, gameplay modes, item names, class names, dungeon or stage names, stat names, mechanics, and UI or feature terms.
+- Exclude ordinary narration and generic words that are not specific to a game context.
+- Keep terms in their original surface form.
+- Deduplicate terms and preserve their first appearance order.
+- If no valid game term appears, return the clean result.
+
+Output format:
+- Terms found: {"status":"{{STATUS_SUSPECT}}","spans":["term 1","term 2"]}
+- No terms: {"status":"{{STATUS_OK}}","spans":[]}
+
+Do not translate. Do not explain. Do not add terms that are not present in the text.
+Text:
+{{TEXT}}
