@@ -85,7 +85,7 @@ def format_completion_lines(
     output_path: Path,
     task_config: TaskConfig,
 ) -> list[str]:
-    return [
+    lines = [
         "Finished.",
         f"Rows processed : {total_rows}",
         f"{STATUS_OK}: {stats[STATUS_OK]}",
@@ -95,3 +95,6 @@ def format_completion_lines(
         f"CACHE_HITS : {stats['CACHE_HITS']}",
         f"Saved to   : {output_path}",
     ]
+    if task_config.summary_sheet_name is not None:
+        lines.append(f"Summary tab: {task_config.summary_sheet_name}")
+    return lines

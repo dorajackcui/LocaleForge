@@ -137,4 +137,6 @@ def main() -> int:
     print(f"{STATUS_EMPTY:<12}: {result.stats[STATUS_EMPTY]}")
     print(f"MODEL_CALLS  : {result.stats['MODEL_CALLS']}")
     print(f"CACHE_HITS   : {result.stats['CACHE_HITS']}")
+    if task_config.summary_sheet_name is not None:
+        print(f"SUMMARY_TAB  : {task_config.summary_sheet_name}")
     return 0

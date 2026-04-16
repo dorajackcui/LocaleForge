@@ -22,6 +22,7 @@ class TaskConfig:
     details_header: str
     hit_status: str
     use_rule_precheck: bool
+    summary_sheet_name: str | None = None
 
 
 TASK_CONFIGS: dict[str, TaskConfig] = {
@@ -42,6 +43,7 @@ TASK_CONFIGS: dict[str, TaskConfig] = {
         details_header="ExtractedTerms",
         hit_status=STATUS_TERM_EXTRACTED,
         use_rule_precheck=False,
+        summary_sheet_name="TermSummary",
     ),
 }
 TASK_DISPLAY_TO_ID = {config.display_name: task_id for task_id, config in TASK_CONFIGS.items()}

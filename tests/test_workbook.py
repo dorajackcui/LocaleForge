@@ -73,6 +73,7 @@ class WorkbookTests(unittest.TestCase):
             checked = load_workbook(output_path)
             try:
                 result_sheet = checked["Sheet1"]
+                summary_sheet = checked["TermSummary"]
                 self.assertEqual(result_sheet["B1"].value, "TermExtractResult")
                 self.assertEqual(result_sheet["C1"].value, "ExtractedTerms")
                 self.assertEqual(result_sheet["B2"].value, STATUS_EMPTY)
@@ -83,6 +84,16 @@ class WorkbookTests(unittest.TestCase):
                 self.assertEqual(result_sheet["C4"].value, "Fireball | Mana")
                 self.assertEqual(result_sheet["B5"].value, STATUS_OK)
                 self.assertIsNone(result_sheet["C5"].value)
+
+                self.assertEqual(summary_sheet["A1"].value, "ExtractedTerm")
+                self.assertEqual(summary_sheet["B1"].value, "Occurrences")
+                self.assertEqual(summary_sheet["C1"].value, "SourceRows")
+                self.assertEqual(summary_sheet["A2"].value, "Fireball")
+                self.assertEqual(summary_sheet["B2"].value, 2)
+                self.assertEqual(summary_sheet["C2"].value, "3, 4")
+                self.assertEqual(summary_sheet["A3"].value, "Mana")
+                self.assertEqual(summary_sheet["B3"].value, 2)
+                self.assertEqual(summary_sheet["C3"].value, "3, 4")
             finally:
                 checked.close()
 
@@ -131,4 +142,3 @@ class WorkbookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

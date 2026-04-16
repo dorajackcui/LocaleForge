@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.workbook.workbook import Workbook
 from openpyxl.utils import column_index_from_string
 
 from .config.tasks import DEFAULT_INPUT_NAME, STATUS_EMPTY, STATUS_OK, TaskConfig
 from .rules import get_rule_decision, normalize_text
 from .types import ClassificationResult, Classifier, ProgressCallback
+
+
+TERM_SUMMARY_HEADERS = ("ExtractedTerm", "Occurrences", "SourceRows")
+
+
+@dataclass
+class TermSummaryEntry:
+    count: int = 0
+    rows: list[int] = field(default_factory=list)
 
 
 def default_input_path() -> Path:
@@ -31,6 +42,49 @@ def get_workbook_sheet_names(input_path: Path) -> list[str]:
         return list(workbook.sheetnames)
     finally:
         workbook.close()
+
+
+def _normalize_term(term: str) -> str:
+    return " ".join(term.split()).strip()
+
+
+def _collect_term_summary(
+    summary: dict[str, TermSummaryEntry],
+    row_idx: int,
+    spans: list[str],
+) -> None:
+    row_terms: list[str] = []
+    seen_terms: set[str] = set()
+    for span in spans:
+        normalized = _normalize_term(span)
+        if not normalized or normalized in seen_terms:
+            continue
+        seen_terms.add(normalized)
+        row_terms.append(normalized)
+
+    for term in row_terms:
+        entry = summary.setdefault(term, TermSummaryEntry())
+        entry.count += 1
+        entry.rows.append(row_idx)
+
+
+def _write_term_summary_sheet(
+    workbook: Workbook,
+    sheet_name: str,
+    summary: dict[str, TermSummaryEntry],
+) -> None:
+    if sheet_name in workbook.sheetnames:
+        del workbook[sheet_name]
+
+    sheet = workbook.create_sheet(title=sheet_name)
+    for column_idx, header in enumerate(TERM_SUMMARY_HEADERS, start=1):
+        sheet.cell(row=1, column=column_idx).value = header
+
+    for row_idx, (term, entry) in enumerate(summary.items(), start=2):
+        rows = ", ".join(str(row_number) for row_number in entry.rows)
+        sheet.cell(row=row_idx, column=1).value = term
+        sheet.cell(row=row_idx, column=2).value = entry.count
+        sheet.cell(row=row_idx, column=3).value = rows
 
 
 def process_workbook(
@@ -60,6 +114,7 @@ def process_workbook(
         worksheet.cell(row=1, column=spans_index).value = task_config.details_header
 
     cache: dict[str, ClassificationResult] = {}
+    term_summary: dict[str, TermSummaryEntry] = {}
     stats = {
         STATUS_OK: 0,
         STATUS_EMPTY: 0,
@@ -94,9 +149,14 @@ def process_workbook(
         worksheet.cell(row=row_idx, column=result_index).value = result.status
         worksheet.cell(row=row_idx, column=spans_index).value = " | ".join(result.spans)
         stats[result.status] += 1
+        if task_config.summary_sheet_name is not None and result.spans:
+            _collect_term_summary(term_summary, row_idx, result.spans)
 
         if progress_callback is not None:
             progress_callback(offset, total_rows, row_idx, dict(stats))
+
+    if task_config.summary_sheet_name is not None:
+        _write_term_summary_sheet(workbook, task_config.summary_sheet_name, term_summary)
 
     workbook.save(output_path)
     return total_rows, stats

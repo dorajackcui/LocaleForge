@@ -44,6 +44,7 @@ class UiHelperTests(unittest.TestCase):
 
         lines = format_completion_lines(10, stats, Path("output.xlsx"), task_config)
         self.assertTrue(any(task_config.hit_status in line for line in lines))
+        self.assertIn("Summary tab: TermSummary", lines)
 
 
 if __name__ == "__main__":

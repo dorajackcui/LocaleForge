@@ -47,6 +47,7 @@ Default files and headers:
 - Sends every non-empty row to Ollama
 - Extracts game-related terms in any language
 - Writes the extracted terms to the detail column using ` | ` separators
+- Adds a `TermSummary` worksheet with deduplicated extracted terms, occurrence counts, and source rows
 
 Default files and headers:
 
@@ -175,6 +176,8 @@ Examples:
 
 - `english-check`: suspicious untranslated English spans
 - `term-extraction`: extracted game terms
+
+For `term-extraction`, LocaleForge also adds a `TermSummary` worksheet that deduplicates the extracted terms and shows how many rows each term appeared in.
 
 The original workbook is left unchanged. Results are saved to a new file ending in `_checked.xlsx` unless you provide another output path.
 
