@@ -6,25 +6,36 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from ..config.settings import DEFAULT_LOCAL_BASE_URL, DEFAULT_LOCAL_MODEL, AppSettings, load_settings, save_settings
 from ..config.tasks import TaskConfig, get_task_config, get_task_config_by_display_name, get_task_display_names
 from ..prompts import default_prompt_path, resolve_prompt_path_for_task_switch
 from ..runtime import TaskRunRequest, TaskRunResult, run_task
 from ..workbook import default_output_path, get_workbook_sheet_names
-from .helpers import ValidationError, build_run_request, format_completion_lines, format_progress_message
+from .helpers import (
+    ValidationError,
+    api_provider_is_ready,
+    build_run_request,
+    format_completion_lines,
+    format_progress_message,
+    get_api_provider_models,
+)
+from .settings_dialog import LLMSettingsWindow
 
 
 class TranslationCheckerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Local Translation Checker")
-        self.root.geometry("880x620")
-        self.root.minsize(820, 560)
+        self.root.title("LocaleForge")
+        self.root.geometry("960x700")
+        self.root.minsize(900, 620)
 
         default_task = get_task_config()
+        self.settings = load_settings()
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.worker: threading.Thread | None = None
         self._selected_task_id = default_task.task_id
         self._running_task: TaskConfig | None = None
+        self._sync_suspended = False
 
         self.task_var = tk.StringVar(value=default_task.display_name)
         self.input_var = tk.StringVar(value="")
@@ -33,12 +44,20 @@ class TranslationCheckerApp:
         self.source_col_var = tk.StringVar(value="C")
         self.result_col_var = tk.StringVar(value="F")
         self.start_row_var = tk.StringVar(value="2")
-        self.model_var = tk.StringVar(value="gemma4:e4b")
-        self.api_url_var = tk.StringVar(value="http://127.0.0.1:11434")
+        self.execution_mode_var = tk.StringVar(value=self.settings.defaults.execution_mode)
+        self.local_model_var = tk.StringVar(value=self.settings.defaults.local.model or DEFAULT_LOCAL_MODEL)
+        self.local_api_url_var = tk.StringVar(value=self.settings.defaults.local.base_url or DEFAULT_LOCAL_BASE_URL)
+        self.local_concurrency_var = tk.StringVar(value=str(self.settings.defaults.local.concurrency))
+        self.api_provider_var = tk.StringVar(value=self.settings.defaults.api.provider_id or "")
+        self.api_model_var = tk.StringVar(value=self.settings.defaults.api.model)
+        self.api_concurrency_var = tk.StringVar(value=str(self.settings.defaults.api.concurrency))
         self.prompt_file_var = tk.StringVar(value=str(default_prompt_path(default_task.task_id)))
         self.status_var = tk.StringVar(value="Ready")
 
         self._build_ui()
+        self._bind_runtime_events()
+        self._refresh_provider_options()
+        self._refresh_runtime_mode_ui()
         self._load_sheets_from_current_file()
         self.root.after(120, self._poll_events)
 
@@ -129,13 +148,57 @@ class TranslationCheckerApp:
         advanced.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         advanced.columnconfigure(1, weight=1)
 
-        ttk.Label(advanced, text="Model").grid(row=0, column=0, sticky="w", padx=(0, 12))
-        ttk.Entry(advanced, textvariable=self.model_var).grid(row=0, column=1, sticky="ew")
-        ttk.Label(advanced, text="API URL").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
-        ttk.Entry(advanced, textvariable=self.api_url_var).grid(row=1, column=1, sticky="ew", pady=(10, 0))
+        ttk.Label(advanced, text="Run with").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.execution_mode_box = ttk.Combobox(
+            advanced,
+            textvariable=self.execution_mode_var,
+            values=("local", "api"),
+            state="readonly",
+        )
+        self.execution_mode_box.grid(row=0, column=1, sticky="w")
+        self.settings_button = ttk.Button(advanced, text="LLM Settings...", command=self._open_llm_settings)
+        self.settings_button.grid(row=0, column=2, sticky="e")
+
+        self.local_runtime = ttk.Frame(advanced)
+        self.local_runtime.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        self.local_runtime.columnconfigure(1, weight=1)
+
+        ttk.Label(self.local_runtime, text="Model").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.local_model_entry = ttk.Entry(self.local_runtime, textvariable=self.local_model_var)
+        self.local_model_entry.grid(row=0, column=1, sticky="ew")
+        ttk.Label(self.local_runtime, text="Concurrency").grid(row=0, column=2, sticky="e", padx=(16, 8))
+        self.local_concurrency_entry = ttk.Entry(self.local_runtime, textvariable=self.local_concurrency_var, width=8)
+        self.local_concurrency_entry.grid(row=0, column=3, sticky="w")
+        ttk.Label(self.local_runtime, text="API URL").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
+        self.local_api_url_entry = ttk.Entry(self.local_runtime, textvariable=self.local_api_url_var)
+        self.local_api_url_entry.grid(row=1, column=1, columnspan=3, sticky="ew", pady=(10, 0))
+
+        self.api_runtime = ttk.Frame(advanced)
+        self.api_runtime.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        self.api_runtime.columnconfigure(1, weight=1)
+
+        ttk.Label(self.api_runtime, text="Provider").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.api_provider_box = ttk.Combobox(
+            self.api_runtime,
+            textvariable=self.api_provider_var,
+            state="readonly",
+        )
+        self.api_provider_box.grid(row=0, column=1, sticky="ew")
+        ttk.Label(self.api_runtime, text="Concurrency").grid(row=0, column=2, sticky="e", padx=(16, 8))
+        self.api_concurrency_entry = ttk.Entry(self.api_runtime, textvariable=self.api_concurrency_var, width=8)
+        self.api_concurrency_entry.grid(row=0, column=3, sticky="w")
+        ttk.Label(self.api_runtime, text="Model").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
+        self.api_model_box = ttk.Combobox(
+            self.api_runtime,
+            textvariable=self.api_model_var,
+            state="readonly",
+        )
+        self.api_model_box.grid(row=1, column=1, sticky="ew", pady=(10, 0))
+
         ttk.Label(advanced, text="Prompt file").grid(row=2, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
         ttk.Entry(advanced, textvariable=self.prompt_file_var).grid(row=2, column=1, sticky="ew", pady=(10, 0))
-        ttk.Button(advanced, text="Browse...", command=self._choose_prompt_file).grid(
+        self.prompt_button = ttk.Button(advanced, text="Browse...", command=self._choose_prompt_file)
+        self.prompt_button.grid(
             row=2,
             column=2,
             sticky="w",
@@ -169,6 +232,19 @@ class TranslationCheckerApp:
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
+    def _bind_runtime_events(self) -> None:
+        self.execution_mode_box.bind("<<ComboboxSelected>>", self._on_execution_mode_changed)
+        self.api_provider_box.bind("<<ComboboxSelected>>", self._on_api_provider_changed)
+        self.api_model_box.bind("<<ComboboxSelected>>", lambda _event: self._persist_runtime_defaults())
+        for widget in (
+            self.local_model_entry,
+            self.local_api_url_entry,
+            self.local_concurrency_entry,
+            self.api_concurrency_entry,
+        ):
+            widget.bind("<FocusOut>", lambda _event: self._persist_runtime_defaults())
+            widget.bind("<Return>", lambda _event: self._persist_runtime_defaults())
+
     def _current_task_config(self) -> TaskConfig:
         return get_task_config_by_display_name(self.task_var.get())
 
@@ -183,6 +259,25 @@ class TranslationCheckerApp:
             )
         )
         self._selected_task_id = new_task.task_id
+
+    def _open_llm_settings(self) -> None:
+        dialog = LLMSettingsWindow(self.root, self.settings)
+        self.root.wait_window(dialog.window)
+        self._reload_settings()
+
+    def _reload_settings(self) -> None:
+        self.settings = load_settings()
+        self._sync_suspended = True
+        self.execution_mode_var.set(self.settings.defaults.execution_mode)
+        self.local_model_var.set(self.settings.defaults.local.model or DEFAULT_LOCAL_MODEL)
+        self.local_api_url_var.set(self.settings.defaults.local.base_url or DEFAULT_LOCAL_BASE_URL)
+        self.local_concurrency_var.set(str(self.settings.defaults.local.concurrency))
+        self.api_provider_var.set(self.settings.defaults.api.provider_id or "")
+        self.api_model_var.set(self.settings.defaults.api.model)
+        self.api_concurrency_var.set(str(self.settings.defaults.api.concurrency))
+        self._sync_suspended = False
+        self._refresh_provider_options()
+        self._refresh_runtime_mode_ui()
 
     def _choose_input_file(self) -> None:
         chosen = filedialog.askopenfilename(
@@ -231,6 +326,81 @@ class TranslationCheckerApp:
         if chosen:
             self.prompt_file_var.set(chosen)
 
+    def _refresh_provider_options(self) -> None:
+        provider_ids = [provider.provider_id for provider in self.settings.providers]
+        self.api_provider_box["values"] = provider_ids
+        if self.api_provider_var.get() not in provider_ids:
+            self.api_provider_var.set(provider_ids[0] if provider_ids else "")
+        self._refresh_api_model_options()
+
+    def _refresh_api_model_options(self) -> None:
+        models = get_api_provider_models(self.settings, self.api_provider_var.get().strip() or None)
+        self.api_model_box["values"] = models
+        if self.api_model_var.get() not in models:
+            self.api_model_var.set(models[0] if models else "")
+
+    def _safe_concurrency_value(self, raw: str, fallback: int) -> int:
+        try:
+            return int(raw)
+        except ValueError:
+            return fallback
+
+    def _persist_runtime_defaults(self) -> None:
+        if self._sync_suspended:
+            return
+
+        self.settings.defaults.execution_mode = self.execution_mode_var.get().strip() or "local"
+        self.settings.defaults.local.base_url = self.local_api_url_var.get().strip() or DEFAULT_LOCAL_BASE_URL
+        self.settings.defaults.local.model = self.local_model_var.get().strip() or DEFAULT_LOCAL_MODEL
+        self.settings.defaults.local.concurrency = self._safe_concurrency_value(
+            self.local_concurrency_var.get(),
+            self.settings.defaults.local.concurrency,
+        )
+
+        provider_id = self.api_provider_var.get().strip() or None
+        models = get_api_provider_models(self.settings, provider_id)
+        if self.api_model_var.get().strip() not in models:
+            self._sync_suspended = True
+            self.api_model_var.set(models[0] if models else "")
+            self._sync_suspended = False
+
+        self.settings.defaults.api.provider_id = provider_id
+        self.settings.defaults.api.model = self.api_model_var.get().strip()
+        self.settings.defaults.api.concurrency = self._safe_concurrency_value(
+            self.api_concurrency_var.get(),
+            self.settings.defaults.api.concurrency,
+        )
+        save_settings(self.settings)
+        self._refresh_runtime_mode_ui()
+
+    def _on_execution_mode_changed(self, _event: object = None) -> None:
+        self._persist_runtime_defaults()
+
+    def _on_api_provider_changed(self, _event: object = None) -> None:
+        self._refresh_api_model_options()
+        self._persist_runtime_defaults()
+
+    def _refresh_runtime_mode_ui(self) -> None:
+        if self.execution_mode_var.get() == "api":
+            self.local_runtime.grid_remove()
+            self.api_runtime.grid()
+        else:
+            self.api_runtime.grid_remove()
+            self.local_runtime.grid()
+        self._update_run_button_state()
+        self._set_idle_status()
+
+    def _set_idle_status(self) -> None:
+        if self.worker is not None and self.worker.is_alive():
+            return
+        if self.execution_mode_var.get() == "api" and not api_provider_is_ready(
+            self.settings,
+            self.api_provider_var.get().strip() or None,
+        ):
+            self.status_var.set("Configure API provider")
+        else:
+            self.status_var.set("Ready")
+
     def _validate(self) -> TaskRunRequest | None:
         try:
             return build_run_request(
@@ -242,8 +412,16 @@ class TranslationCheckerApp:
                 result_col_text=self.result_col_var.get(),
                 start_row_text=self.start_row_var.get(),
                 sheet_name=self.sheet_var.get(),
-                model=self.model_var.get(),
-                api_url=self.api_url_var.get(),
+                settings=self.settings,
+                execution_mode=self.execution_mode_var.get(),
+                provider_id=self.api_provider_var.get(),
+                model=self.local_model_var.get() if self.execution_mode_var.get() == "local" else self.api_model_var.get(),
+                api_url=self.local_api_url_var.get() if self.execution_mode_var.get() == "local" else "",
+                concurrency_text=(
+                    self.local_concurrency_var.get()
+                    if self.execution_mode_var.get() == "local"
+                    else self.api_concurrency_var.get()
+                ),
             )
         except ValidationError as exc:
             message = str(exc)
@@ -253,13 +431,35 @@ class TranslationCheckerApp:
                 messagebox.showerror("Prompt error", message)
             elif "column" in message.lower():
                 messagebox.showerror("Column error", message)
-            else:
+            elif "row" in message.lower():
                 messagebox.showerror("Row error", message)
+            else:
+                messagebox.showerror("Runtime error", message)
             return None
 
     def _set_running(self, running: bool) -> None:
-        self.run_button.configure(state="disabled" if running else "normal")
         self.task_box.configure(state="disabled" if running else "readonly")
+        self.execution_mode_box.configure(state="disabled" if running else "readonly")
+        self.api_provider_box.configure(state="disabled" if running else "readonly")
+        self.api_model_box.configure(state="disabled" if running else "readonly")
+        self.local_model_entry.configure(state="disabled" if running else "normal")
+        self.local_api_url_entry.configure(state="disabled" if running else "normal")
+        self.local_concurrency_entry.configure(state="disabled" if running else "normal")
+        self.api_concurrency_entry.configure(state="disabled" if running else "normal")
+        self.settings_button.configure(state="disabled" if running else "normal")
+        self.prompt_button.configure(state="disabled" if running else "normal")
+        self._update_run_button_state()
+
+    def _update_run_button_state(self) -> None:
+        if self.worker is not None and self.worker.is_alive():
+            self.run_button.configure(state="disabled")
+            return
+        if self.execution_mode_var.get() == "api":
+            provider_id = self.api_provider_var.get().strip() or None
+            ready = api_provider_is_ready(self.settings, provider_id) and bool(self.api_model_var.get().strip())
+            self.run_button.configure(state="normal" if ready else "disabled")
+            return
+        self.run_button.configure(state="normal")
 
     def _start_run(self) -> None:
         request = self._validate()
@@ -277,10 +477,14 @@ class TranslationCheckerApp:
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
         self._append_log(f"Task  : {request.task_config.task_id}")
+        self._append_log(f"Mode  : {request.execution_mode}")
+        if request.provider_id:
+            self._append_log(f"Provider: {request.provider_id}")
         self._append_log(f"Input : {request.input_path}")
         self._append_log(f"Output: {request.output_path}")
         self._append_log(f"Sheet : {request.sheet_name}")
         self._append_log(f"Model : {request.model}")
+        self._append_log(f"Concurrency: {request.concurrency}")
         self._append_log(f"Prompt: {request.prompt_path}")
 
         self.worker = threading.Thread(target=self._run_worker, args=(request,), daemon=True)

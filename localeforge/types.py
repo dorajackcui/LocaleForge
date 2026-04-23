@@ -14,6 +14,8 @@ ProgressCallback = Callable[[int, int, int, dict[str, int]], None]
 
 
 class Classifier(Protocol):
-    def classify(self, text: str) -> ClassificationResult:
+    def ensure_available(self) -> list[str] | None:
         ...
 
+    def classify(self, text: str) -> ClassificationResult:
+        ...

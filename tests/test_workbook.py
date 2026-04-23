@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,9 +17,24 @@ class FakeClient:
         self.responses = responses
         self.call_count = 0
 
+    def ensure_available(self) -> None:
+        return None
+
     def classify(self, text: str) -> ClassificationResult:
         self.call_count += 1
         return self.responses[text]
+
+
+class SlowTrackingClient(FakeClient):
+    def __init__(self, responses: dict[str, ClassificationResult]) -> None:
+        super().__init__(responses)
+        self.thread_names: set[str] = set()
+        self.lock = threading.Lock()
+
+    def classify(self, text: str) -> ClassificationResult:
+        with self.lock:
+            self.thread_names.add(threading.current_thread().name)
+        return super().classify(text)
 
 
 class WorkbookTests(unittest.TestCase):
@@ -138,6 +154,66 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(stats[STATUS_SUSPECT], 1)
             self.assertEqual(stats[STATUS_OK], 1)
             self.assertEqual(stats["MODEL_CALLS"], 1)
+
+    def test_concurrent_processing_reuses_model_results_and_preserves_output(self) -> None:
+        task_config = get_task_config("term-extraction")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = Path(tmpdir) / "input.xlsx"
+            output_path = Path(tmpdir) / "output.xlsx"
+
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Sheet1"
+            sheet["A1"] = "Source"
+            sheet["A2"] = "Fireball Mana"
+            sheet["A3"] = "bonjour"
+            sheet["A4"] = "Fireball Mana"
+            sheet["A5"] = "bonjour"
+            workbook.save(input_path)
+
+            client = SlowTrackingClient(
+                {
+                    "Fireball Mana": ClassificationResult(
+                        status=STATUS_TERM_EXTRACTED,
+                        spans=["Fireball", "Mana"],
+                    ),
+                    "bonjour": ClassificationResult(
+                        status=STATUS_OK,
+                        spans=[],
+                    ),
+                }
+            )
+
+            total_rows, stats = process_workbook(
+                input_path=input_path,
+                output_path=output_path,
+                sheet_name="Sheet1",
+                source_col="A",
+                result_col="B",
+                start_row=2,
+                client=client,
+                task_config=task_config,
+                concurrency=4,
+            )
+
+            self.assertEqual(total_rows, 4)
+            self.assertEqual(client.call_count, 2)
+            self.assertEqual(stats[STATUS_TERM_EXTRACTED], 2)
+            self.assertEqual(stats[STATUS_OK], 2)
+            self.assertEqual(stats["MODEL_CALLS"], 2)
+            self.assertEqual(stats["CACHE_HITS"], 2)
+
+            checked = load_workbook(output_path)
+            try:
+                result_sheet = checked["Sheet1"]
+                self.assertEqual(result_sheet["B2"].value, STATUS_TERM_EXTRACTED)
+                self.assertEqual(result_sheet["C2"].value, "Fireball | Mana")
+                self.assertEqual(result_sheet["B3"].value, STATUS_OK)
+                self.assertEqual(result_sheet["B4"].value, STATUS_TERM_EXTRACTED)
+                self.assertEqual(result_sheet["C4"].value, "Fireball | Mana")
+                self.assertEqual(result_sheet["B5"].value, STATUS_OK)
+            finally:
+                checked.close()
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .config.settings import AppSettings, get_provider, load_settings
 from .config.tasks import DEFAULT_TASK_ID, STATUS_EMPTY, STATUS_OK, TASK_CONFIGS, TaskConfig, get_task_config
 from .prompts import default_prompt_path
 from .runtime import TaskRunRequest, run_task
@@ -28,7 +29,7 @@ def build_cli_progress_callback(task_config: TaskConfig) -> ProgressCallback:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a local workbook QA or extraction task with deterministic rules plus Ollama."
+        description="Run a workbook QA or extraction task with either local Ollama or an OpenAI-compatible API."
     )
     parser.add_argument(
         "--input",
@@ -62,8 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default="gemma4:e4b",
-        help="Ollama model name. Default: gemma4:e4b",
+        help="Model name. Defaults to the saved model for the selected execution mode.",
     )
     parser.add_argument(
         "--prompt-file",
@@ -77,8 +77,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-url",
-        default="http://127.0.0.1:11434",
-        help="Base URL of the Ollama API.",
+        help="Base URL for the selected runtime. Local mode defaults to the saved Ollama URL.",
+    )
+    parser.add_argument(
+        "--execution-mode",
+        choices=["local", "api"],
+        help="Choose whether to run against local Ollama or an OpenAI-compatible API provider.",
+    )
+    parser.add_argument(
+        "--provider",
+        help="Saved provider id to use in API mode.",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        help="Maximum number of concurrent model requests.",
     )
     parser.add_argument(
         "--timeout",
@@ -89,10 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    parser = build_parser()
-    args = parser.parse_args()
-
+def _build_request_from_args(args: argparse.Namespace, settings: AppSettings) -> TaskRunRequest:
     task_config = get_task_config(args.task)
     input_path = Path(args.input).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve() if args.output else default_output_path(input_path)
@@ -101,42 +111,78 @@ def main() -> int:
         if args.prompt_file
         else default_prompt_path(task_config.task_id)
     )
+    execution_mode = args.execution_mode or settings.defaults.execution_mode
 
-    if not input_path.exists():
-        print(f"Input file does not exist: {input_path}", file=sys.stderr)
+    provider_id: str | None = None
+    api_key: str | None = None
+    api_url = args.api_url or settings.defaults.local.base_url
+    model = args.model or settings.defaults.local.model
+    concurrency = args.concurrency or settings.defaults.local.concurrency
+
+    if execution_mode == "api":
+        provider_id = args.provider or settings.defaults.api.provider_id
+        provider = get_provider(settings, provider_id)
+        if provider is None:
+            raise RuntimeError("API mode requires a saved provider. Configure one in the desktop app first.")
+        if not provider.models:
+            raise RuntimeError(f"Provider `{provider.provider_id}` has not been tested yet.")
+        api_url = args.api_url or provider.base_url
+        api_key = provider.api_key
+        model = args.model or settings.defaults.api.model or provider.models[0]
+        concurrency = args.concurrency or settings.defaults.api.concurrency
+
+    return TaskRunRequest(
+        task_config=task_config,
+        input_path=input_path,
+        output_path=output_path,
+        prompt_path=prompt_path,
+        sheet_name=args.sheet,
+        source_col=args.source_col,
+        result_col=args.result_col,
+        start_row=args.start_row,
+        execution_mode=execution_mode,
+        provider_id=provider_id,
+        api_url=api_url,
+        api_key=api_key,
+        model=model,
+        concurrency=concurrency,
+        timeout=args.timeout,
+    )
+
+
+def main() -> int:
+    settings = load_settings()
+    parser = build_parser()
+    args = parser.parse_args()
+
+    request = _build_request_from_args(args, settings)
+
+    if not request.input_path.exists():
+        print(f"Input file does not exist: {request.input_path}", file=sys.stderr)
         return 1
 
-    print(f"Task  : {task_config.task_id}")
-    print(f"Input : {input_path}")
-    print(f"Output: {output_path}")
-    print(f"Sheet : {args.sheet}")
-    print(f"Model : {args.model}")
-    print(f"Prompt: {prompt_path}")
+    print(f"Task  : {request.task_config.task_id}")
+    print(f"Mode  : {request.execution_mode}")
+    if request.provider_id:
+        print(f"Provider: {request.provider_id}")
+    print(f"Input : {request.input_path}")
+    print(f"Output: {request.output_path}")
+    print(f"Sheet : {request.sheet_name}")
+    print(f"Model : {request.model}")
+    print(f"Prompt: {request.prompt_path}")
 
     result = run_task(
-        TaskRunRequest(
-            task_config=task_config,
-            input_path=input_path,
-            output_path=output_path,
-            prompt_path=prompt_path,
-            sheet_name=args.sheet,
-            source_col=args.source_col,
-            result_col=args.result_col,
-            start_row=args.start_row,
-            api_url=args.api_url,
-            model=args.model,
-            timeout=args.timeout,
-        ),
-        progress_callback=build_cli_progress_callback(task_config),
+        request,
+        progress_callback=build_cli_progress_callback(request.task_config),
     )
 
     print("\nFinished.")
     print(f"Rows processed : {result.total_rows}")
     print(f"{STATUS_OK:<12}: {result.stats[STATUS_OK]}")
-    print(f"{task_config.hit_status:<12}: {result.stats[task_config.hit_status]}")
+    print(f"{request.task_config.hit_status:<12}: {result.stats[request.task_config.hit_status]}")
     print(f"{STATUS_EMPTY:<12}: {result.stats[STATUS_EMPTY]}")
     print(f"MODEL_CALLS  : {result.stats['MODEL_CALLS']}")
     print(f"CACHE_HITS   : {result.stats['CACHE_HITS']}")
-    if task_config.summary_sheet_name is not None:
-        print(f"SUMMARY_TAB  : {task_config.summary_sheet_name}")
+    if request.task_config.summary_sheet_name is not None:
+        print(f"SUMMARY_TAB  : {request.task_config.summary_sheet_name}")
     return 0

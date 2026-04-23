@@ -9,7 +9,6 @@ Rules:
 - If unsure, mark suspicious.
 
 Allowed exceptions:
-- Pokémon IP terms
 - Tags or placeholders, for example: {a}, {player_name}, <color=red>, %s
 
 Output format:

@@ -1,6 +1,6 @@
 # LocaleForge
 
-LocaleForge is a local-first Excel QA tool for localization teams. It processes workbook rows with a local Ollama model and currently supports two tasks:
+LocaleForge is a local-first Excel QA tool for localization teams. It processes workbook rows with either a local Ollama model or an OpenAI-compatible API provider and currently supports two tasks:
 
 - `english-check`: detect untranslated English leaking into French localized text
 - `term-extraction`: extract game-related terms from a text segment
@@ -10,7 +10,7 @@ The prompts remain as standalone files at the repo root so you can tune them wit
 ## Why LocaleForge
 
 - Keeps sensitive localization data on your machine
-- Uses a local model instead of a hosted API
+- Lets you stay local with Ollama or switch to a hosted OpenAI-compatible API
 - Fits Excel-based review workflows common in localization pipelines
 - Separates task config, prompts, model integration, workbook logic, CLI, and UI for easier iteration
 
@@ -60,24 +60,28 @@ LocaleForge now uses a small internal package structure:
 
 1. `localeforge.config.tasks` defines task ids, labels, statuses, headers, and defaults.
 2. `localeforge.prompts` resolves and validates prompt templates.
-3. `localeforge.model.ollama` handles Ollama availability checks and response parsing.
-4. `localeforge.rules` contains the English/French heuristic prechecks.
-5. `localeforge.workbook` handles workbook reading, row processing, cache reuse, and writeback.
-6. `localeforge.runtime` provides the shared task execution flow used by both CLI and UI.
-7. `localeforge.ui` contains the Tkinter app and UI-specific helpers.
+3. `localeforge.config.settings` persists saved providers, API keys, and runtime defaults in `~/.localeforge/settings.json`.
+4. `localeforge.model.ollama` handles Ollama availability checks and response parsing.
+5. `localeforge.model.openai_compatible` handles provider tests via `GET /models` and task requests via `POST /chat/completions`.
+6. `localeforge.rules` contains the English/French heuristic prechecks.
+7. `localeforge.workbook` handles workbook reading, concurrent row processing, cache reuse, and writeback.
+8. `localeforge.runtime` provides the shared task execution flow used by both CLI and UI.
+9. `localeforge.ui` contains the Tkinter app, runtime helpers, and the provider settings window.
 
 By default the tool expects:
 
 - Ollama running at `http://127.0.0.1:11434`
 - Model name `gemma4:e4b`
 - Worksheet `Sheet1`
+- API providers, if configured, saved under `~/.localeforge/settings.json`
 
 ## Privacy
 
 LocaleForge is designed for local localization workflows.
 
-- Workbook content stays on your machine
-- Model calls go only to your local Ollama instance
+- Workbook content stays on your machine unless you choose an API provider
+- Local mode sends model calls only to your Ollama instance
+- API mode sends prompt content to the provider you configured
 - Sensitive test files are excluded from Git with [`.gitignore`](D:\e4b\.gitignore)
 
 You should still review your local machine, model setup, and access controls for your own environment.
@@ -133,9 +137,21 @@ python .\check_excel_translations.py `
   --result-col "F" `
   --prompt-file ".\translation_checker_prompt.txt" `
   --start-row 2 `
+  --execution-mode "local" `
   --model "gemma4:e4b" `
-  --api-url "http://127.0.0.1:11434"
+  --api-url "http://127.0.0.1:11434" `
+  --concurrency 1
 ```
+
+For a saved API provider:
+
+```powershell
+python .\check_excel_translations.py `
+  --execution-mode "api" `
+  --provider "my-openai-compatible-provider"
+```
+
+CLI defaults now load from `~/.localeforge/settings.json`, so once you save a provider and default model in the desktop app, the CLI can reuse them.
 
 Prompt template notes:
 
@@ -159,9 +175,18 @@ The UI lets you:
 - Select the worksheet
 - Switch between the two tasks
 - Configure source and output columns
-- Change the local model and Ollama API URL
+- Switch between `local` and `api` execution modes
+- Change the local Ollama model, URL, and concurrency
+- Choose a saved API provider, tested model, and concurrency
+- Open a dedicated `LLM Settings...` window to add, test, edit, and delete providers
 - Use a different prompt template file for prompt debugging
 - Run the task and review progress in a log panel
+
+Provider notes:
+
+- Custom API providers must pass a `GET /models` test before they can be saved
+- Provider API keys, saved models, and runtime defaults are persisted across restarts
+- API mode keeps the Run button disabled until the selected provider has been tested successfully
 
 When you switch tasks, the prompt file auto-switches only if it is still using the previous task's default prompt.
 

@@ -30,3 +30,5 @@ test*.xlsx
 # Excel temp/output files
 ~$*.xlsx
 *_checked.xlsx
+
+.env

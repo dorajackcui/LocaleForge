@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -96,6 +97,7 @@ def process_workbook(
     start_row: int,
     client: Classifier,
     task_config: TaskConfig,
+    concurrency: int = 1,
     progress_callback: ProgressCallback | None = None,
 ) -> tuple[int, dict[str, int]]:
     workbook = load_workbook(input_path)
@@ -113,7 +115,8 @@ def process_workbook(
     if not worksheet.cell(row=1, column=spans_index).value:
         worksheet.cell(row=1, column=spans_index).value = task_config.details_header
 
-    cache: dict[str, ClassificationResult] = {}
+    row_results: dict[int, ClassificationResult] = {}
+    pending_rows: dict[str, list[int]] = {}
     term_summary: dict[str, TermSummaryEntry] = {}
     stats = {
         STATUS_OK: 0,
@@ -124,36 +127,60 @@ def process_workbook(
     }
 
     total_rows = max(worksheet.max_row - start_row + 1, 0)
-    for offset, row_idx in enumerate(range(start_row, worksheet.max_row + 1), start=1):
+    completed_rows = 0
+    for row_idx in range(start_row, worksheet.max_row + 1):
         raw_value = worksheet.cell(row=row_idx, column=source_index).value
         text = normalize_text(raw_value)
 
         decision = get_rule_decision(task_config, text)
-        result: ClassificationResult | None = None
 
         if decision.status is not None:
             result = ClassificationResult(status=decision.status, spans=[])
+            row_results[row_idx] = result
+            stats[result.status] += 1
+            completed_rows += 1
+            if progress_callback is not None:
+                progress_callback(completed_rows, total_rows, row_idx, dict(stats))
         else:
-            cached = cache.get(text)
-            if cached is not None:
-                result = cached
+            if text in pending_rows:
+                pending_rows[text].append(row_idx)
                 stats["CACHE_HITS"] += 1
             else:
-                result = client.classify(text)
-                cache[text] = result
-                stats["MODEL_CALLS"] += 1
+                pending_rows[text] = [row_idx]
 
+    if pending_rows:
+        max_workers = max(1, min(concurrency, len(pending_rows)))
+        if max_workers == 1:
+            resolved_results = {
+                text: client.classify(text)
+                for text in pending_rows
+            }
+        else:
+            resolved_results: dict[str, ClassificationResult] = {}
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_text = {executor.submit(client.classify, text): text for text in pending_rows}
+                for future in as_completed(future_to_text):
+                    text = future_to_text[future]
+                    resolved_results[text] = future.result()
+
+        for text, result in resolved_results.items():
+            stats["MODEL_CALLS"] += 1
+            for row_idx in pending_rows[text]:
+                row_results[row_idx] = result
+                stats[result.status] += 1
+                if task_config.summary_sheet_name is not None and result.spans:
+                    _collect_term_summary(term_summary, row_idx, result.spans)
+                completed_rows += 1
+                if progress_callback is not None:
+                    progress_callback(completed_rows, total_rows, row_idx, dict(stats))
+
+    for row_idx in range(start_row, worksheet.max_row + 1):
+        result = row_results.get(row_idx)
         if result is None:
             raise RuntimeError(f"Failed to classify row {row_idx}")
 
         worksheet.cell(row=row_idx, column=result_index).value = result.status
         worksheet.cell(row=row_idx, column=spans_index).value = " | ".join(result.spans)
-        stats[result.status] += 1
-        if task_config.summary_sheet_name is not None and result.spans:
-            _collect_term_summary(term_summary, row_idx, result.spans)
-
-        if progress_callback is not None:
-            progress_callback(offset, total_rows, row_idx, dict(stats))
 
     if task_config.summary_sheet_name is not None:
         _write_term_summary_sheet(workbook, task_config.summary_sheet_name, term_summary)
