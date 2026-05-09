@@ -1,10 +1,14 @@
 # LocaleForge
 
-LocaleForge is an agent-first CLI for running LLM tasks over Excel and CSV files. It is designed as middleware for localization and content workflows: read text from a `source` column, process it with a Markdown-defined task, and write the result to a `target` column.
+LocaleForge is an agent-first CLI for running Markdown-defined LLM tasks over CSV and Excel tables.
 
-The CLI supports one file or a whole folder with the same command.
+It reads text from a table column, calls the configured model once per unique non-empty value, and writes a new output table. The source file is never modified.
 
-Agents should start with [AGENTS.md](AGENTS.md). Copy [.env.example](.env.example) to `.env` for local provider configuration.
+## Start Here
+
+- [AGENTS.md](AGENTS.md) is the operational runbook: configuration checks, validation, run commands, JSON output, exit codes, and batch rules.
+- [tasks/README.md](tasks/README.md) lists the supported tasks and explains which template to copy for new tasks.
+- [.env.example](.env.example) shows the local provider settings expected by the CLI.
 
 ## Install
 
@@ -13,191 +17,43 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-## Configure Once
+LocaleForge requires Python 3.11 or newer.
 
-Put the base URL, API key, default model, and run defaults in a local `.env` file. After that, repeated runs do not need provider details:
+## Configure
+
+Copy the example environment file and fill in your local provider settings:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
-# LOCALEFORGE_CONCURRENCY, and LOCALEFORGE_MAX_ATTEMPTS.
-```
-
-If `.env` contains `OPENAI_BASE_URL` and `OPENAI_API_KEY`, LocaleForge automatically uses an API provider named `env`. `OPENAI_MODEL` becomes the default model for tasks that do not specify one.
-
-Check the environment:
-
-```powershell
 localeforge doctor
 ```
 
-Use `localeforge doctor --json` only when another tool needs machine-readable output.
+Keep API keys in `.env`; do not put secrets in task files or command arguments.
 
-`localeforge provider add` is optional. Use it only when you need named providers or persisted defaults beyond the simple `.env` path.
+## Tasks
 
-## Run
+Tasks are Markdown files with YAML front matter. The front matter describes stable configuration, and the Markdown body is the system prompt sent to the model.
 
-Single CSV or Excel file:
+Use the existing runnable tasks for common flows:
 
-```powershell
-localeforge run --task tasks/example-transform.md --input data/source.csv
-localeforge run --task tasks/example-transform.md --input data/source.xlsx
-```
+- `tasks/rewrite.md` rewrites one source cell into one target cell.
+- `tasks/review.md` reviews one source cell into structured output columns.
 
-Add one-off session guidance without editing the task file:
+Use the templates when creating a new task:
 
-```powershell
-localeforge run --task tasks/example-transform.md --input data/source.xlsx --tips "This batch uses a casual UI tone."
-```
+- `tasks/example-transform.md` for text-in/text-out work.
+- `tasks/example-status-json.md` for structured JSON output.
 
-Folder batch:
-
-```powershell
-localeforge run --task tasks/example-transform.md --input data/raw --output-dir data/out
-```
-
-Directory input recursively scans `.csv` and `.xlsx` files and mirrors the structure under `--output-dir`. The output directory must be outside the input directory so generated files are not picked up by later batch runs.
-
-Default output names include the task id so repeated task runs are easy to distinguish:
+## Project Layout
 
 ```text
-data/source.csv + tasks/example-transform.md -> data/source_example-transform.csv
-mt.localeforge.xlsx + tasks/review.md -> mt.localeforge_review.xlsx
+localeforge/       CLI package
+tasks/            runnable tasks and templates
+tests/            unit and integration tests
+AGENTS.md         agent runbook
+.env.example      local configuration template
 ```
 
-Use `--output` for a single file when you need an exact path. LocaleForge refuses to overwrite an existing output or report file unless you pass `--force`, and `--report` must not point at an input or output table file.
+## Guarantees
 
-Progress is written to stderr so stdout stays clean for reports and JSON. Human runs show text progress by default; JSON runs keep progress off unless explicitly requested:
-
-```powershell
-localeforge run --task tasks/example-transform.md --input data/raw --output-dir data/out --progress text
-localeforge run --task tasks/example-transform.md --input data/raw --output-dir data/out --json --progress jsonl
-```
-
-`LOCALEFORGE_CONCURRENCY` controls how many model requests can run at once. File loading and writing remain sequential; only model calls are concurrent.
-
-`LOCALEFORGE_MAX_ATTEMPTS` controls retries per unique input, including the first try. The retry wraps both provider errors and response validation errors, so invalid `status-json` output gets a corrective retry.
-
-Use `--tips` for temporary run-specific guidance. Tips are appended to the task system prompt for that run only and are not written back to the task file.
-
-## Validate Before Running
-
-`validate` checks a task/input combination without calling the model or writing output files:
-
-```powershell
-localeforge validate --task tasks/example-transform.md --input data/raw --output-dir data/out --json
-```
-
-It checks the task schema, files, worksheets, source column, target column behavior, output path shape, and provider resolution.
-
-## Task Files
-
-A task is one Markdown file. YAML front matter stores durable configuration; the Markdown body is the system prompt.
-
-Use [tasks/example-transform.md](tasks/example-transform.md) for text-in/text-out tasks and [tasks/example-status-json.md](tasks/example-status-json.md) for structured multi-column tasks.
-
-Minimal transform task:
-
-```markdown
----
-id: proofread
-mode: transform
-model: gpt-5.5
----
-
-Polish the user text.
-Return only the polished text. Do not explain.
-```
-
-`model` is optional. Omit it to use `OPENAI_MODEL` from `.env`; set it when a task needs a specific model.
-
-For an explicit task model, use either shorthand or the nested model form:
-
-```yaml
-model:
-  name: gpt-5.5
-```
-
-Do not put concurrency or retry policy in task files. Those are global runtime settings in `.env`.
-
-Default table contract:
-
-- input column: `source`
-- output column: `target`
-- header row: `1`
-- first data row: `2`
-
-Column matching is case-insensitive. The `target` column is created when missing.
-
-Override columns only when a file uses a different schema:
-
-```powershell
-localeforge run --task tasks/example-transform.md --input data/a.xlsx --input-col C --output-col F
-```
-
-## Task Modes
-
-`transform` is the default mode. The model returns final text, and LocaleForge writes it to `target`.
-
-`status-json` is for QA, extraction, and classification tasks. The model must return a JSON object:
-
-```json
-{
-  "status": "NEEDS_REVIEW",
-  "category": "tone",
-  "reason": "Too literal",
-  "suggestion": "Rewrite naturally"
-}
-```
-
-Each JSON field is written to an output column with the same name. The example above creates or updates `status`, `category`, `reason`, and `suggestion`.
-
-For stable batch contracts, declare the expected fields. When `output.fields` is present, missing or unknown model fields are treated as response validation errors and are retried:
-
-```yaml
-output:
-  fields:
-    - status
-    - category
-    - reason
-    - suggestion
-```
-
-Use `output.columns` only when a JSON field should be written to a different column name:
-
-```yaml
-output:
-  fields:
-    - status
-    - reason
-  columns:
-    status: review_status
-    reason: review_reason
-```
-
-## Reports And JSON
-
-Use `--json` for machine-readable stdout and `--report` for a JSON file:
-
-```powershell
-localeforge run `
-  --task tasks/example-transform.md `
-  --input data/raw `
-  --output-dir data/out `
-  --report reports/run.json `
-  --json
-```
-
-Exit codes:
-
-```text
-0 success
-1 usage or configuration error
-2 input or output file error
-3 model or provider error
-4 partial failure in folder batch
-```
-
-## Privacy
-
-LocaleForge writes new output files and leaves source files unchanged. Input text is sent only to the selected model provider. Secrets stay in local `.env` files; provider settings store env var names and are redacted from reports and JSON output.
+LocaleForge writes new output files instead of editing source tables in place. Input text is sent only to the selected model provider, and provider secrets stay in local environment configuration.
