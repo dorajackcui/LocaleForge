@@ -45,6 +45,14 @@ class CliTests(unittest.TestCase):
             else:
                 os.environ[name] = value
 
+    def _write_api_env(self, model: str = "gpt-4.1-mini") -> None:
+        Path(".env").write_text(
+            "OPENAI_BASE_URL=https://api.example.com/v1\n"
+            "OPENAI_API_KEY=secret\n"
+            f"OPENAI_MODEL={model}\n",
+            encoding="utf-8",
+        )
+
     def test_provider_add_and_list_json_redacts_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings_path = Path(tmpdir) / "settings.json"
@@ -78,6 +86,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(provider["api_key_env"], "LF_KEY")
 
     def test_validate_json_success(self) -> None:
+        self._write_api_env()
         with tempfile.TemporaryDirectory() as tmpdir:
             task = Path(tmpdir) / "task.md"
             task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
@@ -93,6 +102,7 @@ class CliTests(unittest.TestCase):
             self.assertTrue(payload["files"][0]["output"].endswith("a_proofread.csv"))
 
     def test_run_rejects_report_path_that_matches_table_output(self) -> None:
+        self._write_api_env()
         task = Path("task.md")
         task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
         source = Path("source.csv")
@@ -124,6 +134,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("Report path must be different", payload["errors"][0])
 
     def test_validate_report_file_requires_force_to_overwrite(self) -> None:
+        self._write_api_env()
         task = Path("task.md")
         task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
         source = Path("source.csv")
@@ -160,6 +171,7 @@ class CliTests(unittest.TestCase):
         self.assertIn('"status": "success"', report.read_text(encoding="utf-8"))
 
     def test_doctor_defaults_to_human_readable_output(self) -> None:
+        self._write_api_env()
         output = StringIO()
 
         with patch("localeforge.cli._create_client_for_effective_config", return_value=StaticModelClient({})):
@@ -174,12 +186,7 @@ class CliTests(unittest.TestCase):
         self.assertNotIn('"status"', text)
 
     def test_doctor_prefers_local_env_api_when_no_provider_is_saved(self) -> None:
-        Path(".env").write_text(
-            "OPENAI_BASE_URL=https://api.example.com/v1\n"
-            "OPENAI_API_KEY=secret\n"
-            "OPENAI_MODEL=gpt-4.1-mini\n",
-            encoding="utf-8",
-        )
+        self._write_api_env()
         output = StringIO()
 
         with patch("localeforge.cli.OpenAICompatibleClient", return_value=StaticModelClient({})) as client:
@@ -195,6 +202,97 @@ class CliTests(unittest.TestCase):
         self.assertIn("execution_mode: api", text)
         self.assertIn("provider: env", text)
         self.assertIn("model: gpt-4.1-mini", text)
+        self.assertNotIn("gemma4", text)
+
+    def test_task_model_overrides_env_default_model(self) -> None:
+        Path(".env").write_text(
+            "OPENAI_BASE_URL=https://api.example.com/v1\n"
+            "OPENAI_API_KEY=secret\n"
+            "OPENAI_MODEL=env-default\n",
+            encoding="utf-8",
+        )
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\nmodel: task-model\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["model"]["execution_mode"], "api")
+        self.assertEqual(payload["model"]["provider"], "env")
+        self.assertEqual(payload["model"]["name"], "task-model")
+
+    def test_task_without_model_uses_env_default_model(self) -> None:
+        Path(".env").write_text(
+            "OPENAI_BASE_URL=https://api.example.com/v1\n"
+            "OPENAI_API_KEY=secret\n"
+            "OPENAI_MODEL=env-default\n",
+            encoding="utf-8",
+        )
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["model"]["execution_mode"], "api")
+        self.assertEqual(payload["model"]["provider"], "env")
+        self.assertEqual(payload["model"]["name"], "env-default")
+
+    def test_legacy_local_default_model_does_not_override_env_default_model(self) -> None:
+        settings_path = Path(os.environ["LOCALEFORGE_SETTINGS_PATH"])
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "defaults": {
+                        "execution_mode": "local",
+                        "provider_id": None,
+                        "model": "gemma4:e4b",
+                        "concurrency": 1,
+                        "max_attempts": 2,
+                    },
+                    "providers": [],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self._write_api_env(model="env-default")
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["model"]["execution_mode"], "api")
+        self.assertEqual(payload["model"]["provider"], "env")
+        self.assertEqual(payload["model"]["name"], "env-default")
+
+    def test_doctor_requires_api_config_instead_of_falling_back_to_local(self) -> None:
+        output = StringIO()
+
+        with redirect_stdout(output):
+            code = main(["doctor"])
+
+        self.assertEqual(code, 3)
+        text = output.getvalue()
+        self.assertIn("status: error", text)
+        self.assertIn("API execution requires", text)
         self.assertNotIn("gemma4", text)
 
     def test_doctor_requires_api_model_when_env_provider_is_used(self) -> None:
@@ -217,6 +315,7 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("gemma4", text)
 
     def test_run_progress_writes_to_stderr_without_polluting_json_stdout(self) -> None:
+        self._write_api_env()
         task = Path("task.md")
         task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
         source = Path("source.csv")
@@ -236,6 +335,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("done", stderr.getvalue())
 
     def test_run_tips_cli_adds_to_prompt(self) -> None:
+        self._write_api_env()
         class PromptCaptureClient:
             def __init__(self) -> None:
                 self.prompts: list[str] = []
@@ -274,6 +374,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("Keep product names unchanged.", client.prompts[0])
 
     def test_run_max_attempts_cli_retries_invalid_json(self) -> None:
+        self._write_api_env()
         class FlakyJsonClient:
             def __init__(self) -> None:
                 self.calls = 0
@@ -316,7 +417,13 @@ class CliTests(unittest.TestCase):
                     return "not json"
                 return '{"status":"OK"}'
 
-        Path(".env").write_text("LOCALEFORGE_MAX_ATTEMPTS=3\n", encoding="utf-8")
+        Path(".env").write_text(
+            "OPENAI_BASE_URL=https://api.example.com/v1\n"
+            "OPENAI_API_KEY=secret\n"
+            "OPENAI_MODEL=gpt-4.1-mini\n"
+            "LOCALEFORGE_MAX_ATTEMPTS=3\n",
+            encoding="utf-8",
+        )
         task = Path("task.md")
         task.write_text("---\nid: qa\nmode: status-json\n---\n\nReturn JSON.\n", encoding="utf-8")
         source = Path("source.csv")
@@ -356,7 +463,13 @@ class CliTests(unittest.TestCase):
                     self.active -= 1
                 return user_text.upper()
 
-        Path(".env").write_text("LOCALEFORGE_CONCURRENCY=3\n", encoding="utf-8")
+        Path(".env").write_text(
+            "OPENAI_BASE_URL=https://api.example.com/v1\n"
+            "OPENAI_API_KEY=secret\n"
+            "OPENAI_MODEL=gpt-4.1-mini\n"
+            "LOCALEFORGE_CONCURRENCY=3\n",
+            encoding="utf-8",
+        )
         task = Path("task.md")
         task.write_text("---\nid: proofread\nmode: transform\n---\n\nPolish.\n", encoding="utf-8")
         source = Path("source.csv")

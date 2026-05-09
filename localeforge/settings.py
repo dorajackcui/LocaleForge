@@ -10,8 +10,6 @@ from .errors import ConfigError
 
 
 SETTINGS_ENV = "LOCALEFORGE_SETTINGS_PATH"
-DEFAULT_BASE_URL = "http://127.0.0.1:11434"
-DEFAULT_LOCAL_MODEL = "gemma4:e4b"
 _LOADED_ENV_FILES: set[Path] = set()
 
 
@@ -28,9 +26,9 @@ class ProviderConfig:
 
 @dataclass
 class SettingsDefaults:
-    execution_mode: str = "local"
+    execution_mode: str = "api"
     provider_id: str | None = None
-    model: str = DEFAULT_LOCAL_MODEL
+    model: str = ""
     concurrency: int = 1
     max_attempts: int = 2
 
@@ -65,13 +63,7 @@ def load_settings(path: Path | str | None = None) -> AppSettings:
     defaults_raw = raw.get("defaults") if isinstance(raw.get("defaults"), dict) else {}
     assert isinstance(defaults_raw, dict)
     providers_raw = raw.get("providers") if isinstance(raw.get("providers"), list) else []
-    defaults = SettingsDefaults(
-        execution_mode=str(defaults_raw.get("execution_mode", "local")).strip() or "local",
-        provider_id=_optional_str(defaults_raw.get("provider_id")),
-        model=str(defaults_raw.get("model", DEFAULT_LOCAL_MODEL)).strip() or DEFAULT_LOCAL_MODEL,
-        concurrency=_positive_int(defaults_raw.get("concurrency"), 1),
-        max_attempts=_positive_int(defaults_raw.get("max_attempts"), 2),
-    )
+    defaults = _defaults_from_dict(defaults_raw)
     providers = [_provider_from_dict(item) for item in providers_raw if isinstance(item, dict)]
     return AppSettings(defaults=defaults, providers=providers)
 
@@ -190,14 +182,31 @@ def load_local_env(path: Path | str | None = None) -> bool:
 
 
 def _provider_from_dict(data: dict[str, Any]) -> ProviderConfig:
+    models = _unique(data.get("models") if isinstance(data.get("models"), list) else [])
+    default_model = str(data.get("default_model", "")).strip()
+    if not default_model and models:
+        default_model = models[0]
     return ProviderConfig(
         provider_id=str(data.get("provider_id", "")).strip(),
         base_url=str(data.get("base_url", "")).strip(),
         base_url_env=_optional_str(data.get("base_url_env")),
         api_key=str(data.get("api_key", "")).strip(),
         api_key_env=_optional_str(data.get("api_key_env")),
-        default_model=str(data.get("default_model", "")).strip(),
-        models=_unique(data.get("models") if isinstance(data.get("models"), list) else []),
+        default_model=default_model,
+        models=models,
+    )
+
+
+def _defaults_from_dict(data: dict[str, Any]) -> SettingsDefaults:
+    legacy_api = data.get("api") if isinstance(data.get("api"), dict) else {}
+    assert isinstance(legacy_api, dict)
+
+    return SettingsDefaults(
+        execution_mode=str(data.get("execution_mode", "api")).strip() or "api",
+        provider_id=_optional_str(data.get("provider_id")) or _optional_str(legacy_api.get("provider_id")),
+        model=str(data.get("model") or legacy_api.get("model") or "").strip(),
+        concurrency=_positive_int(data.get("concurrency", legacy_api.get("concurrency")), 1),
+        max_attempts=_positive_int(data.get("max_attempts"), 2),
     )
 
 

@@ -8,7 +8,7 @@ It reads text from a table column, calls the configured model once per unique no
 
 - [AGENTS.md](AGENTS.md) is the operational runbook: configuration checks, validation, run commands, JSON output, exit codes, and batch rules.
 - [tasks/README.md](tasks/README.md) lists the supported tasks and explains which template to copy for new tasks.
-- [.env.example](.env.example) shows the local provider settings expected by the CLI.
+- [.env.example](.env.example) shows the API provider settings expected by the CLI.
 
 ## Install
 
@@ -21,7 +21,7 @@ LocaleForge requires Python 3.11 or newer.
 
 ## Configure
 
-Copy the example environment file and fill in your local provider settings:
+Copy the example environment file and fill in your API provider settings:
 
 ```powershell
 Copy-Item .env.example .env
@@ -38,6 +38,10 @@ Use the existing runnable tasks for common flows:
 
 - `tasks/rewrite.md` rewrites one source cell into one target cell.
 - `tasks/review.md` reviews one source cell into structured output columns.
+
+```powershell
+localeforge run --task tasks/rewrite.md --input data/source.csv --json
+```
 
 Use the templates when creating a new task:
 

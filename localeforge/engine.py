@@ -24,7 +24,7 @@ class RunOptions:
     input_col: str | None = None
     output_col: str | None = None
     sheet: str | None = None
-    execution_mode: str = "local"
+    execution_mode: str = "api"
     provider: str | None = None
     model: str = ""
     concurrency: int = 1

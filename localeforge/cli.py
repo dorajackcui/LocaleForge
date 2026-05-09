@@ -11,10 +11,9 @@ from .engine import RunOptions, run_task, validate_task
 from .errors import ConfigError, InputOutputError, LocaleForgeError, exit_code_for_error
 from .inputs import discover_work_items
 from .progress import ProgressReporter
-from .providers import OllamaClient, OpenAICompatibleClient
+from .providers import OpenAICompatibleClient
 from .report import RunReport
 from .settings import (
-    DEFAULT_BASE_URL,
     AppSettings,
     ProviderConfig,
     add_provider,
@@ -115,10 +114,10 @@ def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = Tr
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     parser.add_argument("--force", action="store_true", help="Allow overwriting existing output files.")
     if include_model:
-        parser.add_argument("--execution-mode", choices=["local", "api"])
+        parser.add_argument("--execution-mode", choices=["api"])
         parser.add_argument("--provider")
         parser.add_argument("--model")
-        parser.add_argument("--base-url", help="Override provider/local base URL.")
+        parser.add_argument("--base-url", help="Override provider base URL.")
         parser.add_argument("--timeout", type=float, default=120.0)
         parser.add_argument("--concurrency", type=_positive_int_arg, help="Maximum concurrent model requests.")
         parser.add_argument("--max-attempts", type=_positive_int_arg, help="Maximum attempts per unique input, including the first try.")
@@ -217,7 +216,7 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
         provider = effective.provider_id
         model = effective.model
     else:
-        execution_mode = getattr(args, "execution_mode", None) or profile.model.execution_mode or "local"
+        execution_mode = getattr(args, "execution_mode", None) or profile.model.execution_mode or "api"
         provider = getattr(args, "provider", None) or profile.model.provider
         model = getattr(args, "model", None) or profile.model.name or ""
     return RunOptions(
@@ -228,7 +227,7 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
         input_col=args.input_col,
         output_col=args.output_col,
         sheet=args.sheet,
-        execution_mode=execution_mode or "local",
+        execution_mode=execution_mode or "api",
         provider=provider,
         model=model or "",
         concurrency=concurrency,
@@ -303,16 +302,9 @@ def _create_client_for_effective_config(
 
 
 def _client_from_effective_config(effective: EffectiveModelConfig, args: argparse.Namespace):
-    if effective.execution_mode == "api":
-        return OpenAICompatibleClient(
-            base_url=effective.base_url,
-            api_key=effective.api_key,
-            model=effective.model,
-            timeout=getattr(args, "timeout", 120.0),
-        )
-
-    return OllamaClient(
+    return OpenAICompatibleClient(
         base_url=effective.base_url,
+        api_key=effective.api_key,
         model=effective.model,
         timeout=getattr(args, "timeout", 120.0),
     )
@@ -334,49 +326,34 @@ def _resolve_effective_model_config(
     explicit_provider_id = getattr(args, "provider", None) or (profile.model.provider if profile else None)
     explicit_model = getattr(args, "model", None) or (profile.model.name if profile else None)
 
-    execution_mode = explicit_execution_mode
-    if execution_mode is None:
-        if explicit_provider_id or defaults.execution_mode == "api" or defaults.provider_id:
-            execution_mode = "api"
-        elif env_provider is not None:
-            execution_mode = "api"
-        else:
-            execution_mode = defaults.execution_mode or "local"
+    execution_mode = explicit_execution_mode or "api"
+    if execution_mode != "api":
+        raise ConfigError("Only API execution is supported. Configure OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_MODEL.")
 
-    if execution_mode == "api":
-        provider_id = explicit_provider_id or defaults.provider_id or (env_provider.provider_id if env_provider else None)
-        provider = get_provider(settings, provider_id)
-        if provider is None and env_provider is not None and provider_id in {None, env_provider.provider_id}:
-            provider = env_provider
-        if provider is None:
-            raise ConfigError("API execution requires a saved provider or OPENAI_BASE_URL/OPENAI_API_KEY in .env.")
+    provider_id = explicit_provider_id or defaults.provider_id or (env_provider.provider_id if env_provider else None)
+    provider = get_provider(settings, provider_id)
+    if provider is None and env_provider is not None and provider_id in {None, env_provider.provider_id}:
+        provider = env_provider
+    if provider is None:
+        raise ConfigError("API execution requires a saved provider or OPENAI_BASE_URL/OPENAI_API_KEY in .env.")
 
-        base_url = getattr(args, "base_url", None) or resolve_base_url(provider)
-        if not base_url:
-            raise ConfigError(f"Provider `{provider.provider_id}` requires a base URL. Set --base-url-env, --base-url, or OPENAI_BASE_URL.")
-        api_key = resolve_api_key(provider)
-        if not api_key:
-            raise ConfigError(f"Provider `{provider.provider_id}` requires an API key. Set --api-key-env, --api-key, or OPENAI_API_KEY.")
+    base_url = getattr(args, "base_url", None) or resolve_base_url(provider)
+    if not base_url:
+        raise ConfigError(f"Provider `{provider.provider_id}` requires a base URL. Set --base-url-env, --base-url, or OPENAI_BASE_URL.")
+    api_key = resolve_api_key(provider)
+    if not api_key:
+        raise ConfigError(f"Provider `{provider.provider_id}` requires an API key. Set --api-key-env, --api-key, or OPENAI_API_KEY.")
 
-        model = explicit_model or (defaults.model if defaults.execution_mode == "api" else "") or provider.default_model
-        if require_model and not model:
-            raise ConfigError("API execution requires a model. Set --model, task model.name, provider default model, or OPENAI_MODEL.")
-        return EffectiveModelConfig(
-            execution_mode="api",
-            provider=provider,
-            provider_id=provider.provider_id,
-            base_url=base_url,
-            api_key=api_key,
-            model=model,
-        )
-
-    model = explicit_model or defaults.model or "gemma4:e4b"
+    default_model = defaults.model if defaults.execution_mode == "api" else ""
+    model = explicit_model or default_model or provider.default_model
+    if require_model and not model:
+        raise ConfigError("API execution requires a model. Set --model, task model.name, provider default model, or OPENAI_MODEL.")
     return EffectiveModelConfig(
-        execution_mode="local",
-        provider=None,
-        provider_id=None,
-        base_url=getattr(args, "base_url", None) or DEFAULT_BASE_URL,
-        api_key="",
+        execution_mode="api",
+        provider=provider,
+        provider_id=provider.provider_id,
+        base_url=base_url,
+        api_key=api_key,
         model=model,
     )
 

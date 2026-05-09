@@ -17,6 +17,39 @@ from localeforge.settings import (
 
 
 class SettingsTests(unittest.TestCase):
+    def test_load_settings_supports_legacy_nested_api_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            path.write_text(
+                '{\n'
+                '  "defaults": {\n'
+                '    "execution_mode": "api",\n'
+                '    "api": {\n'
+                '      "provider_id": "test",\n'
+                '      "model": "gpt-5.5",\n'
+                '      "concurrency": 5\n'
+                '    }\n'
+                '  },\n'
+                '  "providers": [\n'
+                '    {\n'
+                '      "provider_id": "test",\n'
+                '      "base_url": "https://api.example.com/v1",\n'
+                '      "api_key": "secret",\n'
+                '      "models": ["gpt-5.5"]\n'
+                '    }\n'
+                '  ]\n'
+                '}\n',
+                encoding="utf-8",
+            )
+
+            settings = load_settings(path)
+
+        self.assertEqual(settings.defaults.execution_mode, "api")
+        self.assertEqual(settings.defaults.provider_id, "test")
+        self.assertEqual(settings.defaults.model, "gpt-5.5")
+        self.assertEqual(settings.defaults.concurrency, 5)
+        self.assertEqual(settings.providers[0].default_model, "gpt-5.5")
+
     def test_add_provider_from_local_env_file_without_persisting_secret(self) -> None:
         tmpdir_context = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir_context.cleanup)

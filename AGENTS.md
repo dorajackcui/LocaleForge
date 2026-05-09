@@ -122,4 +122,5 @@ Use:
 - For folder runs, `--output-dir` must be outside the input directory.
 - Output and report files must not already exist unless `--force` is used.
 - `--report` must not point at an input or output table file.
-- Most tasks should omit `model` and use `OPENAI_MODEL` from `.env`.
+- Task-level `model` takes precedence over `OPENAI_MODEL` from `.env`.
+- Tasks without `model` use the configured default model from `.env` or the saved API provider.

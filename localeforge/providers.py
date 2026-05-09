@@ -73,7 +73,6 @@ class OpenAICompatibleClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ],
-            "temperature": 0,
         }
         try:
             response = self._session().post(
@@ -85,7 +84,11 @@ class OpenAICompatibleClient:
             response.raise_for_status()
             data = response.json()
         except Exception as exc:
-            raise ModelProviderError(f"Provider request failed for model `{self.model}`.") from exc
+            detail = _provider_error_detail(exc)
+            message = f"Provider request failed for model `{self.model}`."
+            if detail:
+                message = f"{message} {detail}"
+            raise ModelProviderError(message) from exc
         return _extract_chat_content(data)
 
     def _session(self) -> requests.Session:
@@ -100,49 +103,6 @@ class OpenAICompatibleClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-
-
-class OllamaClient:
-    def __init__(self, base_url: str, model: str, timeout: float = 120.0) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.timeout = timeout
-        self._local = threading.local()
-
-    def ensure_available(self) -> list[str]:
-        try:
-            response = self._session().get(f"{self.base_url}/api/tags", timeout=self.timeout)
-            response.raise_for_status()
-            payload = response.json()
-        except Exception as exc:
-            raise ModelProviderError(f"Cannot reach local Ollama service at {self.base_url}/api/tags.") from exc
-        models = [str(item.get("name", "")).strip() for item in payload.get("models", []) if isinstance(item, dict)]
-        if models and self.model not in models:
-            raise ModelProviderError(f"Model `{self.model}` was not found in local Ollama.")
-        return [model for model in models if model]
-
-    def generate(self, system_prompt: str, user_text: str) -> str:
-        prompt = f"{system_prompt.strip()}\n\nInput:\n{user_text}"
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0},
-        }
-        try:
-            response = self._session().post(f"{self.base_url}/api/generate", json=payload, timeout=self.timeout)
-            response.raise_for_status()
-            data = response.json()
-        except Exception as exc:
-            raise ModelProviderError(f"Ollama request failed for model `{self.model}`.") from exc
-        return str(data.get("response", ""))
-
-    def _session(self) -> requests.Session:
-        session = getattr(self._local, "session", None)
-        if session is None:
-            session = requests.Session()
-            self._local.session = session
-        return session
 
 
 def _extract_chat_content(payload: dict[str, Any]) -> str:
@@ -165,3 +125,39 @@ def _extract_chat_content(payload: dict[str, Any]) -> str:
                 parts.append(str(item.get("text", "")))
         return "\n".join(parts)
     return json.dumps(content, ensure_ascii=False)
+
+
+def _provider_error_detail(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return ""
+
+    parts: list[str] = []
+    status_code = getattr(response, "status_code", None)
+    if status_code:
+        parts.append(f"HTTP {status_code}.")
+
+    body = _provider_error_body(response)
+    if body:
+        parts.append(body)
+
+    return " ".join(parts)
+
+
+def _provider_error_body(response: Any) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        text = str(getattr(response, "text", "")).strip()
+        return text[:500]
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message", "")).strip()
+            if message:
+                return message[:500]
+        message = str(payload.get("message", "")).strip()
+        if message:
+            return message[:500]
+    return json.dumps(payload, ensure_ascii=False)[:500]
