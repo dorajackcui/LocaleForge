@@ -42,3 +42,7 @@ localeforge-settings*.json
 settings.local.json
 reports/
 data/out/
+
+.codex/
+docs/superpower/
+docs/superpowers/
