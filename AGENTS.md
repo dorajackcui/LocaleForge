@@ -84,6 +84,15 @@ localeforge run --task tasks/proofread.md --input data/source.xlsx --input-col C
 
 A task is a Markdown file with YAML front matter and a prompt body.
 
+When creating a new task, copy [tasks/example-task.md](tasks/example-task.md) and change:
+
+- `id`: stable task identifier, lowercase with hyphens
+- `description`: short human summary
+- `input.column` and `output.column`: omit or keep `source` and `target` for the default schema
+- prompt body: the full system prompt sent to the model
+
+Most tasks should omit the `model` block and use `OPENAI_MODEL` from `.env`.
+
 ```markdown
 ---
 id: proofread

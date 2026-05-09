@@ -52,6 +52,15 @@ class TaskProfileTests(unittest.TestCase):
         self.assertEqual(profile.model.provider, "default-api")
         self.assertEqual(profile.model.concurrency, 4)
 
+    def test_example_task_is_valid(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        profile = load_task_profile(root / "tasks" / "example-task.md")
+
+        self.assertEqual(profile.id, "example-rewrite-fr")
+        self.assertEqual(profile.input.column, "source")
+        self.assertEqual(profile.output.column, "target")
+        self.assertIn("Return only the rewritten text.", profile.prompt)
+
     def test_missing_prompt_body_is_invalid(self) -> None:
         path = self.write_task("---\nid: empty\n---\n")
 

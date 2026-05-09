@@ -65,6 +65,8 @@ It checks the task schema, files, worksheets, source column, target column behav
 
 A task is one Markdown file. YAML front matter stores durable configuration; the Markdown body is the system prompt.
 
+Use [tasks/example-task.md](tasks/example-task.md) as the copyable template when creating a new task.
+
 Minimal transform task:
 
 ```markdown
