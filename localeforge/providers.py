@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any, Protocol
 
 import requests
@@ -44,11 +45,11 @@ class OpenAICompatibleClient:
         self.api_key = api_key.strip()
         self.model = model
         self.timeout = timeout
-        self.session = requests.Session()
+        self._local = threading.local()
 
     def ensure_available(self) -> list[str]:
         try:
-            response = self.session.get(f"{self.base_url}/models", headers=self._headers(), timeout=self.timeout)
+            response = self._session().get(f"{self.base_url}/models", headers=self._headers(), timeout=self.timeout)
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:
@@ -72,7 +73,7 @@ class OpenAICompatibleClient:
             "temperature": 0,
         }
         try:
-            response = self.session.post(
+            response = self._session().post(
                 f"{self.base_url}/chat/completions",
                 json=payload,
                 headers=self._headers(),
@@ -83,6 +84,13 @@ class OpenAICompatibleClient:
         except Exception as exc:
             raise ModelProviderError(f"Provider request failed for model `{self.model}`.") from exc
         return _extract_chat_content(data)
+
+    def _session(self) -> requests.Session:
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            self._local.session = session
+        return session
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -96,11 +104,11 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
-        self.session = requests.Session()
+        self._local = threading.local()
 
     def ensure_available(self) -> list[str]:
         try:
-            response = self.session.get(f"{self.base_url}/api/tags", timeout=self.timeout)
+            response = self._session().get(f"{self.base_url}/api/tags", timeout=self.timeout)
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:
@@ -119,12 +127,19 @@ class OllamaClient:
             "options": {"temperature": 0},
         }
         try:
-            response = self.session.post(f"{self.base_url}/api/generate", json=payload, timeout=self.timeout)
+            response = self._session().post(f"{self.base_url}/api/generate", json=payload, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
         except Exception as exc:
             raise ModelProviderError(f"Ollama request failed for model `{self.model}`.") from exc
         return str(data.get("response", ""))
+
+    def _session(self) -> requests.Session:
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            self._local.session = session
+        return session
 
 
 def _extract_chat_content(payload: dict[str, Any]) -> str:

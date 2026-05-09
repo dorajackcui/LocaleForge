@@ -51,6 +51,15 @@ localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out
 
 Directory input recursively scans `.csv` and `.xlsx` files and mirrors the structure under `--output-dir`.
 
+Progress is written to stderr so stdout stays clean for reports and JSON. Human runs show text progress by default; JSON runs keep progress off unless explicitly requested:
+
+```powershell
+localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out --progress text
+localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out --json --progress jsonl
+```
+
+Use `--concurrency 4` to run up to four model requests at a time. File loading and writing remain sequential; only model calls are concurrent.
+
 ## Validate Before Running
 
 `validate` checks a task/input combination without calling the model or writing output files:
@@ -81,6 +90,14 @@ Return only the polished text. Do not explain.
 ```
 
 `model` is optional. Omit it to use `OPENAI_MODEL` from `.env`; set it when a task needs a specific model.
+
+For a task-specific concurrency limit, use the nested model form:
+
+```yaml
+model:
+  name: gpt-5.5
+  concurrency: 4
+```
 
 Default table contract:
 

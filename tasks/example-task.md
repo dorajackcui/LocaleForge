@@ -17,6 +17,11 @@ output:
 
 # Optional. Omit this field to use OPENAI_MODEL from .env.
 # model: gpt-5.5
+
+# Optional advanced form when this task needs its own concurrency.
+# model:
+#   name: gpt-5.5
+#   concurrency: 4
 ---
 
 Rewrite the user text into clear, natural, concise French.

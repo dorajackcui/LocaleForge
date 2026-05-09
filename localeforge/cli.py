@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .engine import RunOptions, run_task, validate_task
 from .errors import ConfigError, LocaleForgeError, exit_code_for_error
+from .progress import ProgressReporter
 from .providers import OllamaClient, OpenAICompatibleClient
 from .report import RunReport
 from .settings import (
@@ -53,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="Run a task against one file or a folder.")
     _add_task_run_args(run)
     run.add_argument("--dry-run", action="store_true", help="Validate without calling a model or writing outputs.")
+    run.add_argument("--progress", choices=["auto", "none", "text", "jsonl"], default="auto", help="Emit run progress to stderr.")
 
     validate = subparsers.add_parser("validate", help="Validate a task/input run without model calls or writes.")
     _add_task_run_args(validate)
@@ -113,6 +115,7 @@ def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = Tr
         parser.add_argument("--model")
         parser.add_argument("--base-url", help="Override provider/local base URL.")
         parser.add_argument("--timeout", type=float, default=120.0)
+        parser.add_argument("--concurrency", type=_positive_int_arg, help="Maximum concurrent model requests.")
 
 
 def _handle_provider(args: argparse.Namespace) -> int:
@@ -187,7 +190,7 @@ def _handle_run(args: argparse.Namespace) -> int:
     else:
         client = _create_client_for_effective_config(profile, settings, args)
         client.ensure_available()
-        report = run_task(profile, task_path, options, client)
+        report = run_task(profile, task_path, options, client, progress=_progress_reporter(args))
 
     _write_report(report, args.report)
     _emit(report.to_dict(), json_output=args.json)
@@ -197,6 +200,7 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 
 def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> RunOptions:
+    concurrency = _resolve_concurrency(args, profile, settings)
     if settings is not None:
         effective = _resolve_effective_model_config(profile, settings, args, require_model=False)  # type: ignore[arg-type]
         execution_mode = effective.execution_mode
@@ -216,7 +220,36 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
         execution_mode=execution_mode or "local",
         provider=provider,
         model=model or "",
+        concurrency=concurrency,
     )
+
+
+def _resolve_concurrency(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> int:
+    explicit = getattr(args, "concurrency", None)
+    if explicit is not None:
+        return explicit
+    if profile.model.concurrency is not None:
+        return profile.model.concurrency
+    if settings is not None:
+        return settings.defaults.concurrency  # type: ignore[attr-defined]
+    return 1
+
+
+def _progress_reporter(args: argparse.Namespace) -> ProgressReporter:
+    mode = getattr(args, "progress", "none")
+    if mode == "auto":
+        mode = "none" if getattr(args, "json", False) else "text"
+    return ProgressReporter(mode=mode)
+
+
+def _positive_int_arg(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def _create_client_for_effective_config(

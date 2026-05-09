@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -147,6 +147,24 @@ class CliTests(unittest.TestCase):
         self.assertIn("provider: env", text)
         self.assertIn("model: <not set>", text)
         self.assertNotIn("gemma4", text)
+
+    def test_run_progress_writes_to_stderr_without_polluting_json_stdout(self) -> None:
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+        stderr = StringIO()
+
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=StaticModelClient({"hello": "bonjour"})):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(["run", "--task", str(task), "--input", str(source), "--json", "--progress", "text"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "success")
+        self.assertIn("[1/1]", stderr.getvalue())
+        self.assertIn("done", stderr.getvalue())
 
 
 if __name__ == "__main__":

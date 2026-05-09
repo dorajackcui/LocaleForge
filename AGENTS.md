@@ -71,7 +71,7 @@ localeforge run --task tasks/proofread.md --input data/source.csv --json
 Folder batch:
 
 ```powershell
-localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out --report reports/run.json --json
+localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out --report reports/run.json --json --progress jsonl
 ```
 
 If a file uses different columns:
@@ -90,6 +90,7 @@ When creating a new task, copy [tasks/example-task.md](tasks/example-task.md) an
 - `description`: short human summary
 - `input.column` and `output.column`: omit or keep `source` and `target` for the default schema
 - `model`: optional model name shorthand, for example `model: gpt-5.5`
+- `model.concurrency`: optional max concurrent model requests when using nested model config
 - prompt body: the full system prompt sent to the model
 
 Most tasks should omit `model` and use `OPENAI_MODEL` from `.env`. Set `model` only when a task needs a specific model.
@@ -108,6 +109,23 @@ Return only the polished text. Do not explain.
 Use `transform` for text-in/text-out tasks. Use `status-json` only when the task needs structured status and spans.
 
 Do not put API keys in task files.
+
+## Progress And Concurrency
+
+Progress is emitted to stderr, never stdout. This keeps `--json` stdout parseable.
+
+- `--progress auto`: default; text for human runs, none for `--json`
+- `--progress text`: human-readable progress on stderr
+- `--progress jsonl`: machine-readable progress events on stderr
+- `--progress none`: disable progress
+
+Use `--concurrency N` for per-run model request concurrency. The task front matter can also set:
+
+```yaml
+model:
+  name: gpt-5.5
+  concurrency: 4
+```
 
 ## Exit Codes
 
