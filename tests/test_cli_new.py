@@ -4,6 +4,8 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from localeforge.cli import main
@@ -20,21 +22,22 @@ class CliTests(unittest.TestCase):
             self.addCleanup(os.environ.pop, "LF_KEY", None)
             self.addCleanup(os.environ.pop, "LF_BASE_URL", None)
 
-            code = main(
-                [
-                    "provider",
-                    "add",
-                    "default-api",
-                    "--base-url-env",
-                    "LF_BASE_URL",
-                    "--api-key-env",
-                    "LF_KEY",
-                    "--default-model",
-                    "gpt-4.1-mini",
-                    "--set-default",
-                    "--json",
-                ]
-            )
+            with redirect_stdout(StringIO()):
+                code = main(
+                    [
+                        "provider",
+                        "add",
+                        "default-api",
+                        "--base-url-env",
+                        "LF_BASE_URL",
+                        "--api-key-env",
+                        "LF_KEY",
+                        "--default-model",
+                        "gpt-4.1-mini",
+                        "--set-default",
+                        "--json",
+                    ]
+                )
 
             self.assertEqual(code, 0)
             payload = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -51,7 +54,8 @@ class CliTests(unittest.TestCase):
             source = Path(tmpdir) / "a.csv"
             source.write_text("source\nhello\n", encoding="utf-8")
 
-            code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
+            with redirect_stdout(StringIO()):
+                code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
 
             self.assertEqual(code, 0)
 
