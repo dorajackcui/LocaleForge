@@ -8,6 +8,7 @@ from io import StringIO
 from pathlib import Path
 
 from localeforge.engine import RunOptions, run_task, validate_task
+from localeforge.errors import ModelProviderError
 from localeforge.progress import ProgressReporter
 from localeforge.providers import StaticModelClient
 from localeforge.task_profile import load_task_profile
@@ -169,6 +170,63 @@ class EngineTests(unittest.TestCase):
             output_text = report.files[0].output.read_text(encoding="utf-8")
             self.assertIn("status,category,reason,suggestion", output_text)
             self.assertIn("NEEDS_REVIEW,tone,Too literal,Rewrite naturally", output_text)
+
+    def test_status_json_retries_invalid_model_json(self) -> None:
+        class FlakyJsonClient:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.prompts: list[str] = []
+
+            def ensure_available(self) -> list[str]:
+                return ["flaky"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls += 1
+                self.prompts.append(system_prompt)
+                if self.calls == 1:
+                    return "not json"
+                return '{"status":"OK","reason":"Valid on retry"}'
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "status.md"
+            task_path.write_text("---\nid: qa\nmode: status-json\n---\n\nReturn JSON.\n", encoding="utf-8")
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nhello\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = FlakyJsonClient()
+
+            report = run_task(profile, task_path, RunOptions(input_path=input_path), client)
+
+            self.assertEqual(report.status, "success")
+            self.assertEqual(client.calls, 2)
+            self.assertEqual(report.files[0].model_calls, 2)
+            self.assertIn("Previous attempt failed", client.prompts[1])
+            self.assertIn("OK", report.files[0].output.read_text(encoding="utf-8"))
+
+    def test_status_json_raises_after_retry_limit(self) -> None:
+        class AlwaysInvalidJsonClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def ensure_available(self) -> list[str]:
+                return ["invalid"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls += 1
+                return "not json"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "status.md"
+            task_path.write_text("---\nid: qa\nmode: status-json\n---\n\nReturn JSON.\n", encoding="utf-8")
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nhello\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = AlwaysInvalidJsonClient()
+
+            with self.assertRaisesRegex(ModelProviderError, "after 2 attempts"):
+                run_task(profile, task_path, RunOptions(input_path=input_path, max_attempts=2), client)
+
+            self.assertEqual(client.calls, 2)
 
     def test_status_json_output_columns_can_rename_json_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

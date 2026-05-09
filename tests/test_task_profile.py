@@ -46,6 +46,7 @@ class TaskProfileTests(unittest.TestCase):
             "  provider: default-api\n"
             "  name: gpt-4.1-mini\n"
             "  concurrency: 4\n"
+            "  max_attempts: 3\n"
             "---\n\nPrompt body\n"
         )
         profile = load_task_profile(path)
@@ -56,6 +57,7 @@ class TaskProfileTests(unittest.TestCase):
         self.assertEqual(profile.output.columns["reason"], "H")
         self.assertEqual(profile.model.provider, "default-api")
         self.assertEqual(profile.model.concurrency, 4)
+        self.assertEqual(profile.model.max_attempts, 3)
 
     def test_scalar_model_is_model_name_shorthand(self) -> None:
         path = self.write_task("---\nid: rewrite\nmode: transform\nmodel: gpt-5.5\n---\n\nRewrite.\n")

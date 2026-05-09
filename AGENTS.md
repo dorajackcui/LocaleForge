@@ -91,6 +91,7 @@ When creating a new task, copy [tasks/example-task.md](tasks/example-task.md) an
 - `input.column` and `output.column`: omit or keep `source` and `target` for the default schema
 - `model`: optional model name shorthand, for example `model: gpt-5.5`
 - `model.concurrency`: optional max concurrent model requests when using nested model config
+- `model.max_attempts`: optional attempts per unique input, including the first try
 - prompt body: the full system prompt sent to the model
 
 Most tasks should omit `model` and use `OPENAI_MODEL` from `.env`. Set `model` only when a task needs a specific model.
@@ -130,7 +131,7 @@ output:
 
 Do not put API keys in task files.
 
-## Progress And Concurrency
+## Progress, Concurrency, And Retry
 
 Progress is emitted to stderr, never stdout. This keeps `--json` stdout parseable.
 
@@ -145,7 +146,10 @@ Use `--concurrency N` for per-run model request concurrency. The task front matt
 model:
   name: gpt-5.5
   concurrency: 4
+  max_attempts: 2
 ```
+
+`max_attempts` defaults to `2`. Retries cover provider errors and LocaleForge response validation errors, including invalid `status-json` output. Use `--max-attempts 1` when a workflow must avoid retry calls.
 
 ## Exit Codes
 

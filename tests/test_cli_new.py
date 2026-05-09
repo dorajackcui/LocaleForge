@@ -170,6 +170,35 @@ class CliTests(unittest.TestCase):
         self.assertIn("[1/1]", stderr.getvalue())
         self.assertIn("done", stderr.getvalue())
 
+    def test_run_max_attempts_cli_retries_invalid_json(self) -> None:
+        class FlakyJsonClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def ensure_available(self) -> list[str]:
+                return ["flaky"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls += 1
+                if self.calls == 1:
+                    return "not json"
+                return '{"status":"OK"}'
+
+        task = Path("task.md")
+        task.write_text("---\nid: qa\nmode: status-json\n---\n\nReturn JSON.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+        client = FlakyJsonClient()
+
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=client):
+            with redirect_stdout(stdout):
+                code = main(["run", "--task", str(task), "--input", str(source), "--json", "--max-attempts", "2"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["files"][0]["model_calls"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

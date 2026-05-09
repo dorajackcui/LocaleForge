@@ -116,6 +116,7 @@ def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = Tr
         parser.add_argument("--base-url", help="Override provider/local base URL.")
         parser.add_argument("--timeout", type=float, default=120.0)
         parser.add_argument("--concurrency", type=_positive_int_arg, help="Maximum concurrent model requests.")
+        parser.add_argument("--max-attempts", type=_positive_int_arg, help="Maximum attempts per unique input, including the first try.")
 
 
 def _handle_provider(args: argparse.Namespace) -> int:
@@ -201,6 +202,7 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> RunOptions:
     concurrency = _resolve_concurrency(args, profile, settings)
+    max_attempts = _resolve_max_attempts(args, profile)
     if settings is not None:
         effective = _resolve_effective_model_config(profile, settings, args, require_model=False)  # type: ignore[arg-type]
         execution_mode = effective.execution_mode
@@ -221,6 +223,7 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
         provider=provider,
         model=model or "",
         concurrency=concurrency,
+        max_attempts=max_attempts,
     )
 
 
@@ -233,6 +236,15 @@ def _resolve_concurrency(args: argparse.Namespace, profile: TaskProfile, setting
     if settings is not None:
         return settings.defaults.concurrency  # type: ignore[attr-defined]
     return 1
+
+
+def _resolve_max_attempts(args: argparse.Namespace, profile: TaskProfile) -> int:
+    explicit = getattr(args, "max_attempts", None)
+    if explicit is not None:
+        return explicit
+    if profile.model.max_attempts is not None:
+        return profile.model.max_attempts
+    return 2
 
 
 def _progress_reporter(args: argparse.Namespace) -> ProgressReporter:

@@ -69,6 +69,8 @@ localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out
 
 Use `--concurrency 4` to run up to four model requests at a time. File loading and writing remain sequential; only model calls are concurrent.
 
+LocaleForge retries each unique input up to 2 attempts by default. The retry wraps both provider errors and response validation errors, so invalid `status-json` output gets one corrective retry. Use `--max-attempts 1` to disable retries for a run, or a higher value when a task needs more resilience.
+
 ## Validate Before Running
 
 `validate` checks a task/input combination without calling the model or writing output files:
@@ -100,12 +102,13 @@ Return only the polished text. Do not explain.
 
 `model` is optional. Omit it to use `OPENAI_MODEL` from `.env`; set it when a task needs a specific model.
 
-For a task-specific concurrency limit, use the nested model form:
+For task-specific concurrency or retry limits, use the nested model form:
 
 ```yaml
 model:
   name: gpt-5.5
   concurrency: 4
+  max_attempts: 2
 ```
 
 Default table contract:

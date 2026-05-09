@@ -27,6 +27,7 @@ class RunOptions:
     provider: str | None = None
     model: str = ""
     concurrency: int = 1
+    max_attempts: int = 2
 
 
 def validate_task(profile: TaskProfile, task_path: Path, options: RunOptions) -> RunReport:
@@ -130,10 +131,10 @@ def _run_file(
         else:
             pending[source_text] = [row_idx]
 
-    for source_text, processed in _generate_pending(profile, options, client, pending):
+    for source_text, processed, attempts in _generate_pending(profile, options, client, pending):
         cache[source_text] = processed
         row_indices = pending[source_text]
-        file_report.model_calls += 1
+        file_report.model_calls += attempts
         file_report.rows_processed += len(row_indices)
         rows_done += len(row_indices)
         for row_idx in row_indices:
@@ -160,27 +161,63 @@ def _generate_pending(
     options: RunOptions,
     client: ModelClient,
     pending: dict[str, list[int]],
-) -> Iterator[tuple[str, ProcessedResult]]:
+) -> Iterator[tuple[str, ProcessedResult, int]]:
     if not pending:
         return
     if options.concurrency <= 1:
         for source_text in pending:
-            yield source_text, _generate_processed(profile, client, source_text)
+            processed, attempts = _generate_processed(profile, options, client, source_text)
+            yield source_text, processed, attempts
         return
 
     with ThreadPoolExecutor(max_workers=options.concurrency) as executor:
         futures = {
-            executor.submit(_generate_processed, profile, client, source_text): source_text
+            executor.submit(_generate_processed, profile, options, client, source_text): source_text
             for source_text in pending
         }
         for future in as_completed(futures):
             source_text = futures[future]
-            yield source_text, future.result()
+            processed, attempts = future.result()
+            yield source_text, processed, attempts
 
 
-def _generate_processed(profile: TaskProfile, client: ModelClient, source_text: str) -> ProcessedResult:
-    raw = client.generate(profile.prompt, source_text)
-    return process_model_response(profile.mode, raw)
+def _generate_processed(
+    profile: TaskProfile,
+    options: RunOptions,
+    client: ModelClient,
+    source_text: str,
+) -> tuple[ProcessedResult, int]:
+    max_attempts = max(1, options.max_attempts)
+    last_error: ModelProviderError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            raw = client.generate(_prompt_for_attempt(profile, attempt, last_error), source_text)
+            return process_model_response(profile.mode, raw), attempt
+        except ModelProviderError as exc:
+            last_error = exc
+            if attempt == max_attempts:
+                raise ModelProviderError(f"Model failed after {max_attempts} attempts. Last error: {exc}") from exc
+
+    raise ModelProviderError("Model failed before producing a response.")
+
+
+def _prompt_for_attempt(profile: TaskProfile, attempt: int, last_error: ModelProviderError | None) -> str:
+    if attempt <= 1 or last_error is None:
+        return profile.prompt
+
+    if profile.mode == "status-json":
+        retry_instruction = (
+            "Previous attempt failed: "
+            f"{last_error}\n"
+            "Return exactly one valid JSON object. Do not wrap it in markdown or add prose."
+        )
+    else:
+        retry_instruction = (
+            "Previous attempt failed: "
+            f"{last_error}\n"
+            "Return a valid, non-empty response that satisfies the task."
+        )
+    return f"{profile.prompt}\n\n{retry_instruction}"
 
 
 def _emit_progress(
