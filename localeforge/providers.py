@@ -58,7 +58,7 @@ class OpenAICompatibleClient:
             for item in payload.get("data", [])
             if isinstance(item, dict) and str(item.get("id", "")).strip()
         ]
-        if models and self.model not in models:
+        if self.model and models and self.model not in models:
             raise ModelProviderError(f"Model `{self.model}` was not returned by provider `{self.base_url}`.")
         return models
 

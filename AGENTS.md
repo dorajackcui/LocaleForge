@@ -31,24 +31,18 @@ Expected default credential shape:
 copy .env.example to .env
 .env contains OPENAI_BASE_URL=...
 .env contains OPENAI_API_KEY=...
-provider settings reference OPENAI_BASE_URL by name
-provider settings reference OPENAI_API_KEY by name
+.env contains OPENAI_MODEL=...
 task files do not contain secrets
 ```
 
-Configure provider once:
+Configure once:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set OPENAI_BASE_URL and OPENAI_API_KEY.
-
-localeforge provider add default-api `
-  --base-url-env OPENAI_BASE_URL `
-  --api-key-env OPENAI_API_KEY `
-  --default-model gpt-4.1-mini `
-  --set-default `
-  --json
+# Edit .env and set OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_MODEL.
 ```
+
+When `.env` is present, LocaleForge automatically uses an API provider named `env`. Do not put API keys in task files or command arguments.
 
 ## Validate Before Run
 

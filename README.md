@@ -13,22 +13,16 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-## Configure A Provider Once
+## Configure Once
 
-Put the base URL and API key in a local `.env` file so repeated runs do not need provider details:
+Put the base URL, API key, and default model in a local `.env` file. After that, repeated runs do not need provider details:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set OPENAI_BASE_URL and OPENAI_API_KEY.
-
-localeforge provider add default-api `
-  --base-url-env OPENAI_BASE_URL `
-  --api-key-env OPENAI_API_KEY `
-  --default-model gpt-4.1-mini `
-  --set-default
+# Edit .env and set OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_MODEL.
 ```
 
-After this, tasks and workflow calls do not need to repeat the API key or base URL.
+If `.env` contains `OPENAI_BASE_URL` and `OPENAI_API_KEY`, LocaleForge automatically uses an API provider named `env`. `OPENAI_MODEL` becomes the default model for tasks that do not specify one.
 
 Check the environment:
 
@@ -37,6 +31,8 @@ localeforge doctor
 ```
 
 Use `localeforge doctor --json` only when another tool needs machine-readable output.
+
+`localeforge provider add` is optional. Use it only when you need named providers or persisted defaults beyond the simple `.env` path.
 
 ## Run
 

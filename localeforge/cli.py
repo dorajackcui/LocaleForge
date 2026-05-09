@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from .engine import RunOptions, run_task, validate_task
@@ -11,9 +13,11 @@ from .providers import OllamaClient, OpenAICompatibleClient
 from .report import RunReport
 from .settings import (
     DEFAULT_BASE_URL,
+    AppSettings,
     ProviderConfig,
     add_provider,
     get_provider,
+    load_local_env,
     load_settings,
     resolve_base_url,
     resolve_api_key,
@@ -21,6 +25,22 @@ from .settings import (
     settings_to_public_dict,
 )
 from .task_profile import TaskProfile, load_task_profile
+
+
+ENV_PROVIDER_ID = "env"
+ENV_BASE_URL = "OPENAI_BASE_URL"
+ENV_API_KEY = "OPENAI_API_KEY"
+ENV_MODEL = "OPENAI_MODEL"
+
+
+@dataclass(frozen=True)
+class EffectiveModelConfig:
+    execution_mode: str
+    provider: ProviderConfig | None
+    provider_id: str | None
+    base_url: str
+    api_key: str
+    model: str
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -131,13 +151,9 @@ def _handle_doctor(args: argparse.Namespace) -> int:
     assert isinstance(checks, list)
 
     try:
-        client = _create_client_for_effective_config(None, settings, argparse.Namespace(
-            execution_mode=None,
-            provider=None,
-            model=None,
-            base_url=None,
-            timeout=args.timeout,
-        ))
+        effective = _resolve_effective_model_config(None, settings, args, require_model=False)
+        payload["effective"] = _effective_config_to_public_dict(effective)
+        client = _client_from_effective_config(effective, args)
         models = client.ensure_available()
         checks.append({"name": "provider", "status": "success", "models": models})
     except LocaleForgeError as exc:
@@ -181,14 +197,15 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 
 def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> RunOptions:
-    execution_mode = getattr(args, "execution_mode", None) or profile.model.execution_mode
-    provider = getattr(args, "provider", None) or profile.model.provider
-    model = getattr(args, "model", None) or profile.model.name
     if settings is not None:
-        defaults = settings.defaults  # type: ignore[attr-defined]
-        execution_mode = execution_mode or defaults.execution_mode
-        provider = provider or defaults.provider_id
-        model = model or defaults.model
+        effective = _resolve_effective_model_config(profile, settings, args, require_model=False)  # type: ignore[arg-type]
+        execution_mode = effective.execution_mode
+        provider = effective.provider_id
+        model = effective.model
+    else:
+        execution_mode = getattr(args, "execution_mode", None) or profile.model.execution_mode or "local"
+        provider = getattr(args, "provider", None) or profile.model.provider
+        model = getattr(args, "model", None) or profile.model.name or ""
     return RunOptions(
         input_path=Path(args.input).expanduser().resolve(),
         output_dir=Path(args.output_dir).expanduser().resolve() if args.output_dir else None,
@@ -206,50 +223,116 @@ def _create_client_for_effective_config(
     profile: TaskProfile | None,
     settings: object,
     args: argparse.Namespace,
+    require_model: bool = True,
 ):
-    defaults = settings.defaults  # type: ignore[attr-defined]
-    execution_mode = getattr(args, "execution_mode", None) or (profile.model.execution_mode if profile else None) or defaults.execution_mode
-    model = getattr(args, "model", None) or (profile.model.name if profile else None) or defaults.model
-    base_url = getattr(args, "base_url", None)
+    effective = _resolve_effective_model_config(profile, settings, args, require_model=require_model)  # type: ignore[arg-type]
+    return _client_from_effective_config(effective, args)
 
-    if execution_mode == "api":
-        provider_id = getattr(args, "provider", None) or (profile.model.provider if profile else None) or defaults.provider_id
-        provider = get_provider(settings, provider_id)  # type: ignore[arg-type]
-        if provider is None:
-            raise ConfigError("API execution requires a saved provider. Run `localeforge provider add` first.")
-        resolved_base_url = base_url or resolve_base_url(provider)
-        if not resolved_base_url:
-            raise ConfigError(f"Provider `{provider.provider_id}` requires a base URL. Set --base-url-env or --base-url.")
-        api_key = resolve_api_key(provider)
-        if not api_key:
-            raise ConfigError(f"Provider `{provider.provider_id}` requires API key env `{provider.api_key_env}`.")
+
+def _client_from_effective_config(effective: EffectiveModelConfig, args: argparse.Namespace):
+    if effective.execution_mode == "api":
         return OpenAICompatibleClient(
-            base_url=resolved_base_url,
-            api_key=api_key,
-            model=model or provider.default_model,
+            base_url=effective.base_url,
+            api_key=effective.api_key,
+            model=effective.model,
             timeout=getattr(args, "timeout", 120.0),
         )
 
     return OllamaClient(
-        base_url=base_url or DEFAULT_BASE_URL,
-        model=model,
+        base_url=effective.base_url,
+        model=effective.model,
         timeout=getattr(args, "timeout", 120.0),
     )
 
 
 def _validate_provider_resolution(profile: TaskProfile, settings: object, args: argparse.Namespace) -> None:
-    defaults = settings.defaults  # type: ignore[attr-defined]
-    execution_mode = getattr(args, "execution_mode", None) or profile.model.execution_mode or defaults.execution_mode
-    if execution_mode != "api":
-        return
-    provider_id = getattr(args, "provider", None) or profile.model.provider or defaults.provider_id
-    provider = get_provider(settings, provider_id)  # type: ignore[arg-type]
-    if provider is None:
-        raise ConfigError("API execution requires a saved provider. Run `localeforge provider add` first.")
-    if not resolve_base_url(provider):
-        raise ConfigError(f"Provider `{provider.provider_id}` requires a base URL. Set --base-url-env or --base-url.")
-    if not resolve_api_key(provider):
-        raise ConfigError(f"Provider `{provider.provider_id}` requires API key env `{provider.api_key_env}`.")
+    _resolve_effective_model_config(profile, settings, args, require_model=True)  # type: ignore[arg-type]
+
+
+def _resolve_effective_model_config(
+    profile: TaskProfile | None,
+    settings: AppSettings,
+    args: argparse.Namespace,
+    require_model: bool,
+) -> EffectiveModelConfig:
+    defaults = settings.defaults
+    env_provider = _provider_from_env()
+    explicit_execution_mode = getattr(args, "execution_mode", None) or (profile.model.execution_mode if profile else None)
+    explicit_provider_id = getattr(args, "provider", None) or (profile.model.provider if profile else None)
+    explicit_model = getattr(args, "model", None) or (profile.model.name if profile else None)
+
+    execution_mode = explicit_execution_mode
+    if execution_mode is None:
+        if explicit_provider_id or defaults.execution_mode == "api" or defaults.provider_id:
+            execution_mode = "api"
+        elif env_provider is not None:
+            execution_mode = "api"
+        else:
+            execution_mode = defaults.execution_mode or "local"
+
+    if execution_mode == "api":
+        provider_id = explicit_provider_id or defaults.provider_id or (env_provider.provider_id if env_provider else None)
+        provider = get_provider(settings, provider_id)
+        if provider is None and env_provider is not None and provider_id in {None, env_provider.provider_id}:
+            provider = env_provider
+        if provider is None:
+            raise ConfigError("API execution requires a saved provider or OPENAI_BASE_URL/OPENAI_API_KEY in .env.")
+
+        base_url = getattr(args, "base_url", None) or resolve_base_url(provider)
+        if not base_url:
+            raise ConfigError(f"Provider `{provider.provider_id}` requires a base URL. Set --base-url-env, --base-url, or OPENAI_BASE_URL.")
+        api_key = resolve_api_key(provider)
+        if not api_key:
+            raise ConfigError(f"Provider `{provider.provider_id}` requires an API key. Set --api-key-env, --api-key, or OPENAI_API_KEY.")
+
+        model = explicit_model or (defaults.model if defaults.execution_mode == "api" else "") or provider.default_model
+        if require_model and not model:
+            raise ConfigError("API execution requires a model. Set --model, task model.name, provider default model, or OPENAI_MODEL.")
+        return EffectiveModelConfig(
+            execution_mode="api",
+            provider=provider,
+            provider_id=provider.provider_id,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+        )
+
+    model = explicit_model or defaults.model or "gemma4:e4b"
+    return EffectiveModelConfig(
+        execution_mode="local",
+        provider=None,
+        provider_id=None,
+        base_url=getattr(args, "base_url", None) or DEFAULT_BASE_URL,
+        api_key="",
+        model=model,
+    )
+
+
+def _provider_from_env() -> ProviderConfig | None:
+    load_local_env()
+    base_url = os.environ.get(ENV_BASE_URL, "").strip()
+    api_key = os.environ.get(ENV_API_KEY, "").strip()
+    model = os.environ.get(ENV_MODEL, "").strip()
+    if not (base_url or api_key):
+        return None
+    return ProviderConfig(
+        provider_id=ENV_PROVIDER_ID,
+        base_url="",
+        base_url_env=ENV_BASE_URL,
+        api_key="",
+        api_key_env=ENV_API_KEY,
+        default_model=model,
+        models=[model] if model else [],
+    )
+
+
+def _effective_config_to_public_dict(config: EffectiveModelConfig) -> dict[str, str | None]:
+    return {
+        "execution_mode": config.execution_mode,
+        "provider_id": config.provider_id,
+        "base_url": config.base_url,
+        "model": config.model,
+    }
 
 
 def _write_report(report: RunReport, report_path: str | None) -> None:
@@ -278,15 +361,13 @@ def _emit_doctor(payload: dict[str, object], json_output: bool) -> None:
     print("LocaleForge doctor")
     print(f"status: {payload.get('status', 'unknown')}")
 
-    settings = payload.get("settings")
-    if isinstance(settings, dict):
-        defaults = settings.get("defaults")
-        if isinstance(defaults, dict):
-            print(f"execution_mode: {defaults.get('execution_mode', 'unknown')}")
-            provider_id = defaults.get("provider_id")
-            if provider_id:
-                print(f"provider: {provider_id}")
-            print(f"model: {defaults.get('model', 'unknown')}")
+    effective = payload.get("effective")
+    if isinstance(effective, dict):
+        print(f"execution_mode: {effective.get('execution_mode', 'unknown')}")
+        provider_id = effective.get("provider_id")
+        if provider_id:
+            print(f"provider: {provider_id}")
+        print(f"model: {effective.get('model') or '<not set>'}")
 
     checks = payload.get("checks")
     if isinstance(checks, list):
