@@ -4,6 +4,8 @@ LocaleForge is an agent-first CLI for running LLM tasks over Excel and CSV files
 
 The CLI supports one file or a whole folder with the same command.
 
+Agents should start with [AGENTS.md](AGENTS.md). Provider setup examples live in [docs/provider-configuration-example.md](docs/provider-configuration-example.md).
+
 ## Install
 
 ```powershell
