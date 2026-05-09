@@ -55,6 +55,69 @@ class TaskProfileTests(unittest.TestCase):
         self.assertEqual(profile.output.columns["reason"], "H")
         self.assertEqual(profile.model.provider, "default-api")
 
+    def test_output_boolean_strings_are_parsed_as_booleans(self) -> None:
+        path = self.write_task(
+            "---\n"
+            "id: proofread-fr\n"
+            "output:\n"
+            '  create: "false"\n'
+            '  overwrite: "false"\n'
+            "---\n\n"
+            "Prompt body\n"
+        )
+
+        profile = load_task_profile(path)
+
+        self.assertFalse(profile.output.create)
+        self.assertFalse(profile.output.overwrite)
+
+    def test_invalid_output_boolean_string_is_rejected(self) -> None:
+        path = self.write_task(
+            "---\n"
+            "id: proofread-fr\n"
+            "output:\n"
+            '  overwrite: "sometimes"\n'
+            "---\n\n"
+            "Prompt body\n"
+        )
+
+        with self.assertRaisesRegex(TaskProfileError, "output.overwrite"):
+            load_task_profile(path)
+
+    def test_status_json_can_declare_stable_output_fields(self) -> None:
+        path = self.write_task(
+            "---\n"
+            "id: review\n"
+            "mode: status-json\n"
+            "output:\n"
+            "  fields:\n"
+            "    - status\n"
+            "    - reason\n"
+            "---\n\n"
+            "Return JSON.\n"
+        )
+
+        profile = load_task_profile(path)
+
+        self.assertEqual(profile.output.fields, ("status", "reason"))
+
+    def test_output_column_mappings_must_match_declared_fields(self) -> None:
+        path = self.write_task(
+            "---\n"
+            "id: review\n"
+            "mode: status-json\n"
+            "output:\n"
+            "  fields:\n"
+            "    - status\n"
+            "  columns:\n"
+            "    reason: review_reason\n"
+            "---\n\n"
+            "Return JSON.\n"
+        )
+
+        with self.assertRaisesRegex(TaskProfileError, "output.columns"):
+            load_task_profile(path)
+
     def test_model_runtime_fields_are_global_settings(self) -> None:
         path = self.write_task(
             "---\n"
@@ -77,14 +140,24 @@ class TaskProfileTests(unittest.TestCase):
         self.assertIsNone(profile.model.provider)
         self.assertIsNone(profile.model.execution_mode)
 
-    def test_example_task_is_valid(self) -> None:
+    def test_example_transform_task_is_valid(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        profile = load_task_profile(root / "tasks" / "example-task.md")
+        profile = load_task_profile(root / "tasks" / "example-transform.md")
 
-        self.assertEqual(profile.id, "example-rewrite-fr")
+        self.assertEqual(profile.id, "example-transform")
+        self.assertEqual(profile.mode, "transform")
         self.assertEqual(profile.input.column, "source")
         self.assertEqual(profile.output.column, "target")
-        self.assertIn("Return only the rewritten text.", profile.prompt)
+        self.assertIn("return only the rewritten text", profile.prompt)
+
+    def test_example_status_json_task_is_valid(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        profile = load_task_profile(root / "tasks" / "example-status-json.md")
+
+        self.assertEqual(profile.id, "example-status-json")
+        self.assertEqual(profile.mode, "status-json")
+        self.assertEqual(profile.output.fields, ("status", "category", "reason", "suggestion"))
+        self.assertIn("return exactly one JSON object", profile.prompt)
 
     def test_missing_prompt_body_is_invalid(self) -> None:
         path = self.write_task("---\nid: empty\n---\n")

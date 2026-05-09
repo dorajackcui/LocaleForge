@@ -40,38 +40,38 @@ Use `localeforge doctor --json` only when another tool needs machine-readable ou
 Single CSV or Excel file:
 
 ```powershell
-localeforge run --task tasks/proofread.md --input data/source.csv
-localeforge run --task tasks/proofread.md --input data/source.xlsx
+localeforge run --task tasks/example-transform.md --input data/source.csv
+localeforge run --task tasks/example-transform.md --input data/source.xlsx
 ```
 
 Add one-off session guidance without editing the task file:
 
 ```powershell
-localeforge run --task tasks/proofread.md --input data/source.xlsx --tips "This batch uses a casual UI tone."
+localeforge run --task tasks/example-transform.md --input data/source.xlsx --tips "This batch uses a casual UI tone."
 ```
 
 Folder batch:
 
 ```powershell
-localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out
+localeforge run --task tasks/example-transform.md --input data/raw --output-dir data/out
 ```
 
-Directory input recursively scans `.csv` and `.xlsx` files and mirrors the structure under `--output-dir`.
+Directory input recursively scans `.csv` and `.xlsx` files and mirrors the structure under `--output-dir`. The output directory must be outside the input directory so generated files are not picked up by later batch runs.
 
 Default output names include the task id so repeated task runs are easy to distinguish:
 
 ```text
-data/source.csv + tasks/proofread.md -> data/source_proofread.csv
+data/source.csv + tasks/example-transform.md -> data/source_example-transform.csv
 mt.localeforge.xlsx + tasks/review.md -> mt.localeforge_review.xlsx
 ```
 
-Use `--output` for a single file when you need an exact path.
+Use `--output` for a single file when you need an exact path. LocaleForge refuses to overwrite an existing output or report file unless you pass `--force`, and `--report` must not point at an input or output table file.
 
 Progress is written to stderr so stdout stays clean for reports and JSON. Human runs show text progress by default; JSON runs keep progress off unless explicitly requested:
 
 ```powershell
-localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out --progress text
-localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out --json --progress jsonl
+localeforge run --task tasks/example-transform.md --input data/raw --output-dir data/out --progress text
+localeforge run --task tasks/example-transform.md --input data/raw --output-dir data/out --json --progress jsonl
 ```
 
 `LOCALEFORGE_CONCURRENCY` controls how many model requests can run at once. File loading and writing remain sequential; only model calls are concurrent.
@@ -85,7 +85,7 @@ Use `--tips` for temporary run-specific guidance. Tips are appended to the task 
 `validate` checks a task/input combination without calling the model or writing output files:
 
 ```powershell
-localeforge validate --task tasks/proofread.md --input data/raw --output-dir data/out --json
+localeforge validate --task tasks/example-transform.md --input data/raw --output-dir data/out --json
 ```
 
 It checks the task schema, files, worksheets, source column, target column behavior, output path shape, and provider resolution.
@@ -94,7 +94,7 @@ It checks the task schema, files, worksheets, source column, target column behav
 
 A task is one Markdown file. YAML front matter stores durable configuration; the Markdown body is the system prompt.
 
-Use [tasks/example-task.md](tasks/example-task.md) as the copyable template when creating a new task.
+Use [tasks/example-transform.md](tasks/example-transform.md) for text-in/text-out tasks and [tasks/example-status-json.md](tasks/example-status-json.md) for structured multi-column tasks.
 
 Minimal transform task:
 
@@ -132,7 +132,7 @@ Column matching is case-insensitive. The `target` column is created when missing
 Override columns only when a file uses a different schema:
 
 ```powershell
-localeforge run --task tasks/proofread.md --input data/a.xlsx --input-col C --output-col F
+localeforge run --task tasks/example-transform.md --input data/a.xlsx --input-col C --output-col F
 ```
 
 ## Task Modes
@@ -152,10 +152,24 @@ localeforge run --task tasks/proofread.md --input data/a.xlsx --input-col C --ou
 
 Each JSON field is written to an output column with the same name. The example above creates or updates `status`, `category`, `reason`, and `suggestion`.
 
+For stable batch contracts, declare the expected fields. When `output.fields` is present, missing or unknown model fields are treated as response validation errors and are retried:
+
+```yaml
+output:
+  fields:
+    - status
+    - category
+    - reason
+    - suggestion
+```
+
 Use `output.columns` only when a JSON field should be written to a different column name:
 
 ```yaml
 output:
+  fields:
+    - status
+    - reason
   columns:
     status: review_status
     reason: review_reason
@@ -167,7 +181,7 @@ Use `--json` for machine-readable stdout and `--report` for a JSON file:
 
 ```powershell
 localeforge run `
-  --task tasks/proofread.md `
+  --task tasks/example-transform.md `
   --input data/raw `
   --output-dir data/out `
   --report reports/run.json `

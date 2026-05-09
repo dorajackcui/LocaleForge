@@ -26,6 +26,7 @@ class OutputConfig:
     create: bool = True
     overwrite: bool = True
     details_column: str | None = None
+    fields: tuple[str, ...] = ()
     columns: dict[str, str] = field(default_factory=dict)
 
 
@@ -136,12 +137,22 @@ def _input_config(value: object) -> InputConfig:
 
 def _output_config(value: object) -> OutputConfig:
     data = _mapping(value, "output")
+    fields = _string_sequence(data.get("fields"), "output.fields")
+    columns = _string_mapping(data.get("columns"), "output.columns")
+    if fields:
+        unknown_mappings = sorted(set(columns) - set(fields))
+        if unknown_mappings:
+            raise TaskProfileError(
+                "`output.columns` contains fields not listed in `output.fields`: "
+                + ", ".join(unknown_mappings)
+            )
     return OutputConfig(
         column=str(data.get("column", "target")).strip() or "target",
-        create=bool(data.get("create", True)),
-        overwrite=bool(data.get("overwrite", True)),
+        create=_bool_config(data.get("create"), True, "output.create"),
+        overwrite=_bool_config(data.get("overwrite"), True, "output.overwrite"),
         details_column=_optional_str(data.get("details_column")),
-        columns=_string_mapping(data.get("columns"), "output.columns"),
+        fields=fields,
+        columns=columns,
     )
 
 
@@ -174,3 +185,30 @@ def _string_mapping(value: object, field_name: str) -> dict[str, str]:
         if field and column:
             result[field] = column
     return result
+
+
+def _string_sequence(value: object, field_name: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise TaskProfileError(f"`{field_name}` must be a list.")
+    result: list[str] = []
+    for item in value:
+        field = str(item).strip()
+        if field and field not in result:
+            result.append(field)
+    return tuple(result)
+
+
+def _bool_config(value: object, fallback: bool, field_name: str) -> bool:
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"true", "yes", "on", "1"}:
+            return True
+        if normalized in {"false", "no", "off", "0"}:
+            return False
+    raise TaskProfileError(f"`{field_name}` must be a boolean.")

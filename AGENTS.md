@@ -1,166 +1,100 @@
-# LocaleForge Agent Entry
+# LocaleForge Agent Guide
 
-Use this file as the quick-start contract when another agent needs to run LocaleForge.
+Use LocaleForge when you need to run one Markdown-defined LLM task over `.csv` or `.xlsx` tables.
 
-## What This Tool Does
+## What It Does
 
-LocaleForge runs Markdown-defined LLM tasks over `.csv` and `.xlsx` files.
+LocaleForge reads text from a table column, calls the configured model once per unique non-empty cell, and writes a new output table. The source file is never modified.
 
 Default table contract:
 
-- read input text from `source`
-- write output text to `target`
-- header row is row `1`
-- first data row is row `2`
+- input column: `source`
+- output column: `target`
+- header row: `1`
+- first data row: `2`
 
-The source file is not modified. By default, LocaleForge writes `filename_task-id.ext`, for example `source_proofread.csv` or `mt.localeforge_review.xlsx`.
+Default output name:
 
-## First Check
+```text
+data/source.csv + tasks/rewrite.md -> data/source_rewrite.csv
+data/raw/a.xlsx + tasks/review.md -> data/out/a_review.xlsx
+```
 
-Before running a task, check the environment:
+## Before Running
+
+Check configuration first:
 
 ```powershell
 localeforge doctor
 ```
 
-Use `localeforge doctor --json` only if you need to parse the result programmatically.
-
-Expected default credential shape:
+Expected `.env` keys:
 
 ```text
-copy .env.example to .env
-.env contains OPENAI_BASE_URL=...
-.env contains OPENAI_API_KEY=...
-.env contains OPENAI_MODEL=...
-.env contains LOCALEFORGE_CONCURRENCY=...
-.env contains LOCALEFORGE_MAX_ATTEMPTS=...
-task files do not contain secrets
-```
-
-Configure once:
-
-```powershell
-Copy-Item .env.example .env
-# Edit .env and set OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
-# LOCALEFORGE_CONCURRENCY, and LOCALEFORGE_MAX_ATTEMPTS.
-```
-
-When `.env` is present, LocaleForge automatically uses an API provider named `env`. Do not put API keys in task files or command arguments.
-
-## Validate Before Run
-
-For a single file:
-
-```powershell
-localeforge validate --task tasks/proofread.md --input data/source.csv --json
-```
-
-For a folder:
-
-```powershell
-localeforge validate --task tasks/proofread.md --input data/raw --output-dir data/out --json
-```
-
-`validate` must not call the model or write output files. Use it before spending API calls.
-
-## Run
-
-Single file:
-
-```powershell
-localeforge run --task tasks/proofread.md --input data/source.csv --json
-```
-
-Run with temporary session guidance:
-
-```powershell
-localeforge run --task tasks/proofread.md --input data/source.csv --tips "This batch should keep product names unchanged." --json
-```
-
-Folder batch:
-
-```powershell
-localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out --report reports/run.json --json --progress jsonl
-```
-
-If a file uses different columns:
-
-```powershell
-localeforge run --task tasks/proofread.md --input data/source.xlsx --input-col C --output-col F --json
-```
-
-## Task Files
-
-A task is a Markdown file with YAML front matter and a prompt body.
-
-When creating a new task, copy [tasks/example-task.md](tasks/example-task.md) and change:
-
-- `id`: stable task identifier, lowercase with hyphens
-- `description`: short human summary
-- `input.column` and `output.column`: omit or keep `source` and `target` for the default schema
-- `model`: optional model name shorthand, for example `model: gpt-5.5`
-- prompt body: the full system prompt sent to the model
-
-Most tasks should omit `model` and use `OPENAI_MODEL` from `.env`. Set `model` only when a task needs a specific model.
-
-```markdown
----
-id: proofread
-mode: transform
-model: gpt-5.5
----
-
-Polish the user text.
-Return only the polished text. Do not explain.
-```
-
-Use `transform` for text-in/text-out tasks. Use `status-json` when one input cell should produce multiple structured output columns.
-
-For `status-json`, require the model to return one JSON object. Each JSON field becomes an output column:
-
-```json
-{
-  "status": "NEEDS_REVIEW",
-  "category": "tone",
-  "reason": "Too literal",
-  "suggestion": "Rewrite naturally"
-}
-```
-
-Use `output.columns` only when field names and column names should differ:
-
-```yaml
-output:
-  columns:
-    status: review_status
-    reason: review_reason
-```
-
-Do not put API keys in task files.
-
-Do not edit a task file for one-off batch instructions. Use `--tips "..."` to append temporary run-specific guidance to the system prompt.
-
-## Progress, Concurrency, And Retry
-
-Progress is emitted to stderr, never stdout. This keeps `--json` stdout parseable.
-
-- `--progress auto`: default; text for human runs, none for `--json`
-- `--progress text`: human-readable progress on stderr
-- `--progress jsonl`: machine-readable progress events on stderr
-- `--progress none`: disable progress
-
-Global runtime settings live in `.env`:
-
-```text
+OPENAI_BASE_URL=...
+OPENAI_API_KEY=...
+OPENAI_MODEL=...
 LOCALEFORGE_CONCURRENCY=4
 LOCALEFORGE_MAX_ATTEMPTS=2
 ```
 
-Do not put concurrency or retry policy in task files. Use `--concurrency N` or `--max-attempts N` only for a one-off run override.
+Do not put API keys in task files or command arguments.
 
-Retries cover provider errors and LocaleForge response validation errors, including invalid `status-json` output.
+## Workflow
 
-## Exit Codes
+Validate before any model call:
+
+```powershell
+localeforge validate --task tasks/rewrite.md --input data/source.csv --json
+```
+
+Run one file:
+
+```powershell
+localeforge run --task tasks/rewrite.md --input data/source.csv --json
+```
+
+Run a folder:
+
+```powershell
+localeforge run --task tasks/rewrite.md --input data/raw --output-dir data/out --report reports/run.json --json
+```
+
+Use different columns:
+
+```powershell
+localeforge run --task tasks/rewrite.md --input data/source.xlsx --input-col C --output-col F --json
+```
+
+Add temporary run-only guidance:
+
+```powershell
+localeforge run --task tasks/rewrite.md --input data/source.csv --tips "Keep product names unchanged." --json
+```
+
+## Output Contract
+
+With `--json`, stdout is a run report. Parse stdout as JSON.
+
+```json
+{
+  "status": "success",
+  "files": [
+    {
+      "input": "data/source.csv",
+      "output": "data/source_rewrite.csv",
+      "rows_processed": 10,
+      "rows_empty": 1,
+      "model_calls": 8,
+      "cache_hits": 2
+    }
+  ]
+}
+```
+
+Progress and diagnostics go to stderr.
+
+Exit codes:
 
 ```text
 0 success
@@ -170,4 +104,22 @@ Retries cover provider errors and LocaleForge response validation errors, includ
 4 partial failure in folder batch
 ```
 
-When `--json` is used, parse stdout as JSON. Treat human stderr as diagnostic text only.
+## Task Selection
+
+Current supported tasks are documented in [tasks/README.md](tasks/README.md).
+
+Use:
+
+- `tasks/rewrite.md` to rewrite one source cell into one target cell.
+- `tasks/review.md` to review one source cell into structured columns.
+- `tasks/example-transform.md` as a template for new text-in/text-out tasks.
+- `tasks/example-status-json.md` as a template for new structured output tasks.
+
+## Rules
+
+- Always run `validate` before `run`.
+- Use `--tips` for one-off instructions; do not edit a task file for one batch.
+- For folder runs, `--output-dir` must be outside the input directory.
+- Output and report files must not already exist unless `--force` is used.
+- `--report` must not point at an input or output table file.
+- Most tasks should omit `model` and use `OPENAI_MODEL` from `.env`.

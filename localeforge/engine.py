@@ -20,6 +20,7 @@ class RunOptions:
     input_path: Path
     output_dir: Path | None = None
     output_path: Path | None = None
+    allow_overwrite_output: bool = False
     input_col: str | None = None
     output_col: str | None = None
     sheet: str | None = None
@@ -32,7 +33,13 @@ class RunOptions:
 
 
 def validate_task(profile: TaskProfile, task_path: Path, options: RunOptions) -> RunReport:
-    items = discover_work_items(options.input_path, options.output_dir, options.output_path, output_suffix=profile.id)
+    items = discover_work_items(
+        options.input_path,
+        options.output_dir,
+        options.output_path,
+        output_suffix=profile.id,
+        allow_overwrite=options.allow_overwrite_output,
+    )
     report = _new_report(profile, task_path, options)
     errors: list[str] = []
 
@@ -68,7 +75,13 @@ def run_task(
     client: ModelClient,
     progress: ProgressReporter | None = None,
 ) -> RunReport:
-    items = discover_work_items(options.input_path, options.output_dir, options.output_path, output_suffix=profile.id)
+    items = discover_work_items(
+        options.input_path,
+        options.output_dir,
+        options.output_path,
+        output_suffix=profile.id,
+        allow_overwrite=options.allow_overwrite_output,
+    )
     report = _new_report(profile, task_path, options)
     cache: dict[str, ProcessedResult] = {}
     errors: list[str] = []
@@ -193,7 +206,9 @@ def _generate_processed(
     for attempt in range(1, max_attempts + 1):
         try:
             raw = client.generate(_prompt_for_attempt(profile, options, attempt, last_error), source_text)
-            return process_model_response(profile.mode, raw), attempt
+            processed = process_model_response(profile.mode, raw)
+            _validate_processed_result(profile, processed)
+            return processed, attempt
         except ModelProviderError as exc:
             last_error = exc
             if attempt == max_attempts:
@@ -263,6 +278,8 @@ def _validate_output_columns(table: Table, profile: TaskProfile, options: RunOpt
     if profile.mode != "status-json":
         table.resolve_column(options.output_col or profile.output.column, create=profile.output.create)
         return
+    for field_name in profile.output.fields:
+        table.resolve_column(_json_output_column(profile, field_name), create=profile.output.create)
     for column_name in profile.output.columns.values():
         table.resolve_column(column_name, create=profile.output.create)
     if profile.output.details_column:
@@ -270,7 +287,9 @@ def _validate_output_columns(table: Table, profile: TaskProfile, options: RunOpt
 
 
 def _write_json_fields(table: Table, row_idx: int, processed: ProcessedResult, profile: TaskProfile) -> None:
-    for field_name, value in processed.fields.items():
+    field_names = profile.output.fields or tuple(processed.fields.keys())
+    for field_name in field_names:
+        value = processed.fields.get(field_name, "")
         column_name = _json_output_column(profile, field_name)
         column = table.resolve_column(column_name, create=profile.output.create)
         if profile.output.overwrite or not table.get_cell(row_idx, column):
@@ -283,6 +302,23 @@ def _json_output_column(profile: TaskProfile, field_name: str) -> str:
     if field_name == "spans" and profile.output.details_column:
         return profile.output.details_column
     return field_name
+
+
+def _validate_processed_result(profile: TaskProfile, processed: ProcessedResult) -> None:
+    if profile.mode != "status-json" or not profile.output.fields:
+        return
+
+    expected = set(profile.output.fields)
+    actual = set(processed.fields)
+    missing = sorted(expected - actual)
+    unknown = sorted(actual - expected)
+    if missing or unknown:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing fields: {', '.join(missing)}")
+        if unknown:
+            details.append(f"unknown fields: {', '.join(unknown)}")
+        raise ModelProviderError("Model JSON response did not match declared output.fields: " + "; ".join(details))
 
 
 def _new_report(profile: TaskProfile, task_path: Path, options: RunOptions) -> RunReport:

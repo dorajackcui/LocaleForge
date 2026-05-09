@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .engine import RunOptions, run_task, validate_task
-from .errors import ConfigError, LocaleForgeError, exit_code_for_error
+from .errors import ConfigError, InputOutputError, LocaleForgeError, exit_code_for_error
+from .inputs import discover_work_items
 from .progress import ProgressReporter
 from .providers import OllamaClient, OpenAICompatibleClient
 from .report import RunReport
@@ -112,6 +113,7 @@ def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = Tr
     parser.add_argument("--sheet", help="Override task Excel worksheet.")
     parser.add_argument("--report", help="Write a JSON report to this path.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument("--force", action="store_true", help="Allow overwriting existing output files.")
     if include_model:
         parser.add_argument("--execution-mode", choices=["local", "api"])
         parser.add_argument("--provider")
@@ -158,9 +160,9 @@ def _handle_doctor(args: argparse.Namespace) -> int:
     assert isinstance(checks, list)
 
     try:
-        effective = _resolve_effective_model_config(None, settings, args, require_model=False)
+        effective = _resolve_effective_model_config(None, settings, args, require_model=True)
         payload["effective"] = _effective_config_to_public_dict(effective)
-        client = _client_from_effective_config(effective, args)
+        client = _create_client_for_effective_config(None, settings, args, require_model=True)
         models = client.ensure_available()
         checks.append({"name": "provider", "status": "success", "models": models})
     except LocaleForgeError as exc:
@@ -175,8 +177,10 @@ def _handle_validate(args: argparse.Namespace) -> int:
     profile = load_task_profile(task_path)
     settings = load_settings()
     _validate_provider_resolution(profile, settings, args)
-    report = validate_task(profile, task_path, _run_options(args, profile, settings))
-    _write_report(report, args.report)
+    options = _run_options(args, profile, settings)
+    _validate_report_path(args.report, profile, options)
+    report = validate_task(profile, task_path, options)
+    _write_report(report, args.report, allow_overwrite=options.allow_overwrite_output)
     _emit(report.to_dict(), json_output=args.json)
     if report.status == "success":
         return 0
@@ -188,6 +192,7 @@ def _handle_run(args: argparse.Namespace) -> int:
     profile = load_task_profile(task_path)
     settings = load_settings()
     options = _run_options(args, profile, settings)
+    _validate_report_path(args.report, profile, options)
     if args.dry_run:
         _validate_provider_resolution(profile, settings, args)
         report = validate_task(profile, task_path, options)
@@ -196,7 +201,7 @@ def _handle_run(args: argparse.Namespace) -> int:
         client.ensure_available()
         report = run_task(profile, task_path, options, client, progress=_progress_reporter(args))
 
-    _write_report(report, args.report)
+    _write_report(report, args.report, allow_overwrite=options.allow_overwrite_output)
     _emit(report.to_dict(), json_output=args.json)
     if report.status == "success":
         return 0
@@ -219,6 +224,7 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
         input_path=Path(args.input).expanduser().resolve(),
         output_dir=Path(args.output_dir).expanduser().resolve() if args.output_dir else None,
         output_path=Path(args.output).expanduser().resolve() if args.output else None,
+        allow_overwrite_output=bool(getattr(args, "force", False)),
         input_col=args.input_col,
         output_col=args.output_col,
         sheet=args.sheet,
@@ -402,10 +408,34 @@ def _effective_config_to_public_dict(config: EffectiveModelConfig) -> dict[str, 
     }
 
 
-def _write_report(report: RunReport, report_path: str | None) -> None:
+def _validate_report_path(report_path: str | None, profile: TaskProfile, options: RunOptions) -> None:
+    if not report_path:
+        return
+
+    path = Path(report_path).expanduser().resolve()
+    items = discover_work_items(
+        options.input_path,
+        options.output_dir,
+        options.output_path,
+        output_suffix=profile.id,
+        allow_overwrite=options.allow_overwrite_output,
+    )
+    input_paths = {item.input for item in items}
+    output_paths = {item.output for item in items}
+    if path in input_paths:
+        raise InputOutputError("Report path must be different from input file path.")
+    if path in output_paths:
+        raise InputOutputError("Report path must be different from output file path.")
+    if path.exists() and not options.allow_overwrite_output:
+        raise InputOutputError(f"Report path already exists: {path}. Use --force to overwrite it.")
+
+
+def _write_report(report: RunReport, report_path: str | None, allow_overwrite: bool = False) -> None:
     if not report_path:
         return
     path = Path(report_path).expanduser().resolve()
+    if path.exists() and not allow_overwrite:
+        raise InputOutputError(f"Report path already exists: {path}. Use --force to overwrite it.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(report.to_json() + "\n", encoding="utf-8")
 

@@ -51,6 +51,28 @@ class InputsAndTabularTests(unittest.TestCase):
             task_items = discover_work_items(root, Path(tmpdir) / "out", output_suffix="review")
             self.assertEqual(task_items[0].output, (Path(tmpdir) / "out" / "fr" / "a_review.csv").resolve())
 
+    def test_folder_output_dir_cannot_be_inside_input_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "raw"
+            root.mkdir()
+            (root / "a.csv").write_text("source\nhello\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(InputOutputError, "outside the input directory"):
+                discover_work_items(root, root / "out")
+
+    def test_existing_output_requires_explicit_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "a.csv"
+            output = Path(tmpdir) / "out.csv"
+            source.write_text("source\nhello\n", encoding="utf-8")
+            output.write_text("existing\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(InputOutputError, "already exists"):
+                discover_work_items(source, output_path=output)
+
+            items = discover_work_items(source, output_path=output, allow_overwrite=True)
+            self.assertEqual(items[0].output, output.resolve())
+
     def test_csv_header_matching_and_target_creation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "a.csv"

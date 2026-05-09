@@ -52,6 +52,11 @@ class OpenAICompatibleClient:
             response = self._session().get(f"{self.base_url}/models", headers=self._headers(), timeout=self.timeout)
             response.raise_for_status()
             payload = response.json()
+        except requests.HTTPError as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code in {404, 405, 501}:
+                return []
+            raise ModelProviderError(f"Cannot reach provider at {self.base_url}/models.") from exc
         except Exception as exc:
             raise ModelProviderError(f"Cannot reach provider at {self.base_url}/models.") from exc
         models = [
@@ -59,8 +64,6 @@ class OpenAICompatibleClient:
             for item in payload.get("data", [])
             if isinstance(item, dict) and str(item.get("id", "")).strip()
         ]
-        if self.model and models and self.model not in models:
-            raise ModelProviderError(f"Model `{self.model}` was not returned by provider `{self.base_url}`.")
         return models
 
     def generate(self, system_prompt: str, user_text: str) -> str:

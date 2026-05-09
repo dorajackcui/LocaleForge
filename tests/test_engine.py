@@ -287,6 +287,47 @@ class EngineTests(unittest.TestCase):
             self.assertIn("review_status,review_reason", output_text)
             self.assertIn("NEEDS_REVIEW,Too literal", output_text)
 
+    def test_status_json_declared_fields_reject_unknown_fields_and_retry(self) -> None:
+        class ExtraFieldThenValidClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def ensure_available(self) -> list[str]:
+                return ["extra-then-valid"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls += 1
+                if self.calls == 1:
+                    return '{"status":"OK","reason":"Fine","extra":"surprise"}'
+                return '{"status":"OK","reason":"Fine"}'
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "status.md"
+            task_path.write_text(
+                "---\n"
+                "id: qa\n"
+                "mode: status-json\n"
+                "output:\n"
+                "  fields:\n"
+                "    - status\n"
+                "    - reason\n"
+                "---\n\n"
+                "Return JSON.\n",
+                encoding="utf-8",
+            )
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nhello\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = ExtraFieldThenValidClient()
+
+            report = run_task(profile, task_path, RunOptions(input_path=input_path, max_attempts=2), client)
+
+            self.assertEqual(client.calls, 2)
+            self.assertEqual(report.files[0].model_calls, 2)
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("status,reason", output_text)
+            self.assertNotIn("extra", output_text)
+
 
 if __name__ == "__main__":
     unittest.main()

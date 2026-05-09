@@ -92,6 +92,73 @@ class CliTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertTrue(payload["files"][0]["output"].endswith("a_proofread.csv"))
 
+    def test_run_rejects_report_path_that_matches_table_output(self) -> None:
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        output = Path("result.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+        client = StaticModelClient({"hello": "bonjour"})
+
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=client):
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "run",
+                        "--task",
+                        str(task),
+                        "--input",
+                        str(source),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(output),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(client.call_count, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("Report path must be different", payload["errors"][0])
+
+    def test_validate_report_file_requires_force_to_overwrite(self) -> None:
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        report = Path("run.json")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        report.write_text("existing\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(["validate", "--task", str(task), "--input", str(source), "--report", str(report), "--json"])
+
+        self.assertEqual(code, 2)
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("Report path already exists", payload["errors"][0])
+        self.assertEqual(report.read_text(encoding="utf-8"), "existing\n")
+
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            code = main(
+                [
+                    "validate",
+                    "--task",
+                    str(task),
+                    "--input",
+                    str(source),
+                    "--report",
+                    str(report),
+                    "--json",
+                    "--force",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertIn('"status": "success"', report.read_text(encoding="utf-8"))
+
     def test_doctor_defaults_to_human_readable_output(self) -> None:
         output = StringIO()
 
@@ -130,7 +197,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("model: gpt-4.1-mini", text)
         self.assertNotIn("gemma4", text)
 
-    def test_doctor_does_not_fall_back_to_local_model_when_env_model_is_missing(self) -> None:
+    def test_doctor_requires_api_model_when_env_provider_is_used(self) -> None:
         Path(".env").write_text(
             "OPENAI_BASE_URL=https://api.example.com/v1\n"
             "OPENAI_API_KEY=secret\n",
@@ -142,15 +209,11 @@ class CliTests(unittest.TestCase):
             with redirect_stdout(output):
                 code = main(["doctor"])
 
-        self.assertEqual(code, 0)
-        client.assert_called_once()
-        self.assertEqual(client.call_args.kwargs["base_url"], "https://api.example.com/v1")
-        self.assertEqual(client.call_args.kwargs["api_key"], "secret")
-        self.assertEqual(client.call_args.kwargs["model"], "")
+        self.assertEqual(code, 3)
+        client.assert_not_called()
         text = output.getvalue()
-        self.assertIn("execution_mode: api", text)
-        self.assertIn("provider: env", text)
-        self.assertIn("model: <not set>", text)
+        self.assertIn("status: error", text)
+        self.assertIn("API execution requires a model", text)
         self.assertNotIn("gemma4", text)
 
     def test_run_progress_writes_to_stderr_without_polluting_json_stdout(self) -> None:
