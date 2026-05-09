@@ -33,8 +33,10 @@ After this, tasks and workflow calls do not need to repeat the API key or base U
 Check the environment:
 
 ```powershell
-localeforge doctor --json
+localeforge doctor
 ```
+
+Use `localeforge doctor --json` only when another tool needs machine-readable output.
 
 ## Run
 

@@ -143,7 +143,7 @@ def _handle_doctor(args: argparse.Namespace) -> int:
     except LocaleForgeError as exc:
         payload["status"] = "error"
         checks.append({"name": "provider", "status": "error", "error": str(exc)})
-    _emit(payload, json_output=args.json)
+    _emit_doctor(payload, json_output=args.json)
     return 0 if payload["status"] == "success" else 3
 
 
@@ -268,6 +268,41 @@ def _emit(payload: object, json_output: bool) -> None:
         print(f"status: {payload['status']}")
     else:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _emit_doctor(payload: dict[str, object], json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    print("LocaleForge doctor")
+    print(f"status: {payload.get('status', 'unknown')}")
+
+    settings = payload.get("settings")
+    if isinstance(settings, dict):
+        defaults = settings.get("defaults")
+        if isinstance(defaults, dict):
+            print(f"execution_mode: {defaults.get('execution_mode', 'unknown')}")
+            provider_id = defaults.get("provider_id")
+            if provider_id:
+                print(f"provider: {provider_id}")
+            print(f"model: {defaults.get('model', 'unknown')}")
+
+    checks = payload.get("checks")
+    if isinstance(checks, list):
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            name = check.get("name", "check")
+            status = check.get("status", "unknown")
+            if status == "success":
+                models = check.get("models")
+                if isinstance(models, list):
+                    print(f"{name}: ok ({len(models)} models)")
+                else:
+                    print(f"{name}: ok")
+            else:
+                print(f"{name}: error - {check.get('error', 'unknown error')}")
 
 
 def _handle_error(error: LocaleForgeError, json_output: bool) -> int:

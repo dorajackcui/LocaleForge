@@ -7,8 +7,10 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from localeforge.cli import main
+from localeforge.providers import StaticModelClient
 
 
 class CliTests(unittest.TestCase):
@@ -58,6 +60,23 @@ class CliTests(unittest.TestCase):
                 code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
 
             self.assertEqual(code, 0)
+
+    def test_doctor_defaults_to_human_readable_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.environ["LOCALEFORGE_SETTINGS_PATH"] = str(Path(tmpdir) / "settings.json")
+            self.addCleanup(os.environ.pop, "LOCALEFORGE_SETTINGS_PATH", None)
+            output = StringIO()
+
+            with patch("localeforge.cli._create_client_for_effective_config", return_value=StaticModelClient({})):
+                with redirect_stdout(output):
+                    code = main(["doctor"])
+
+            self.assertEqual(code, 0)
+            text = output.getvalue()
+            self.assertIn("LocaleForge doctor", text)
+            self.assertIn("status: success", text)
+            self.assertIn("provider: ok", text)
+            self.assertNotIn('"status"', text)
 
 
 if __name__ == "__main__":

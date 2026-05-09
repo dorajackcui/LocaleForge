@@ -20,8 +20,10 @@ The source file is not modified. LocaleForge writes new `.localeforge.csv` or `.
 Before running a task, check the environment:
 
 ```powershell
-localeforge doctor --json
+localeforge doctor
 ```
+
+Use `localeforge doctor --json` only if you need to parse the result programmatically.
 
 Expected default credential shape:
 
