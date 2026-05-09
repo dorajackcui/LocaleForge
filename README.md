@@ -1,217 +1,130 @@
 # LocaleForge
 
-LocaleForge is a local-first Excel QA tool for localization teams. It processes workbook rows with either a local Ollama model or an OpenAI-compatible API provider and currently supports two tasks:
+LocaleForge is an agent-first CLI for running LLM tasks over Excel and CSV files. It is designed as middleware for localization and content workflows: read text from a `source` column, process it with a Markdown-defined task, and write the result to a `target` column.
 
-- `english-check`: detect untranslated English leaking into French localized text
-- `term-extraction`: extract game-related terms from a text segment
+The CLI supports one file or a whole folder with the same command.
 
-The prompts remain as standalone files at the repo root so you can tune them without editing Python modules.
-
-## Why LocaleForge
-
-- Keeps sensitive localization data on your machine
-- Lets you stay local with Ollama or switch to a hosted OpenAI-compatible API
-- Fits Excel-based review workflows common in localization pipelines
-- Separates task config, prompts, model integration, workbook logic, CLI, and UI for easier iteration
-
-## What It Does
-
-- Reads an `.xlsx` workbook and processes a target worksheet
-- Inspects one source column, defaulting to column `C`
-- Writes a task result to a result column, defaulting to column `F`
-- Writes extracted spans or terms to the next column, defaulting to column `G`
-- Saves a new workbook instead of modifying the original file
-
-Common status values:
-
-- `OK`
-- `EMPTY`
-- `疑似英文未翻译` for `english-check`
-- `提取到术语` for `term-extraction`
-
-## Tasks
-
-### `english-check`
-
-- Uses fast local rules to catch obvious empty or English-heavy rows
-- Sends borderline rows to Ollama for strict judgment
-- Writes suspicious untranslated tokens or phrases to the detail column
-
-Default files and headers:
-
-- Prompt: `translation_checker_prompt.txt`
-- Headers: `CheckResult` / `CheckResultSpans`
-
-### `term-extraction`
-
-- Sends every non-empty row to Ollama
-- Extracts game-related terms in any language
-- Writes the extracted terms to the detail column using ` | ` separators
-- Adds a `TermSummary` worksheet with deduplicated extracted terms, occurrence counts, and source rows
-
-Default files and headers:
-
-- Prompt: `term_extractor_prompt.txt`
-- Headers: `TermExtractResult` / `ExtractedTerms`
-
-## How It Works
-
-LocaleForge now uses a small internal package structure:
-
-1. `localeforge.config.tasks` defines task ids, labels, statuses, headers, and defaults.
-2. `localeforge.prompts` resolves and validates prompt templates.
-3. `localeforge.config.settings` persists saved providers, API keys, and runtime defaults in `~/.localeforge/settings.json`.
-4. `localeforge.model.ollama` handles Ollama availability checks and response parsing.
-5. `localeforge.model.openai_compatible` handles provider tests via `GET /models` and task requests via `POST /chat/completions`.
-6. `localeforge.rules` contains the English/French heuristic prechecks.
-7. `localeforge.workbook` handles workbook reading, concurrent row processing, cache reuse, and writeback.
-8. `localeforge.runtime` provides the shared task execution flow used by both CLI and UI.
-9. `localeforge.ui` contains the Tkinter app, runtime helpers, and the provider settings window.
-
-By default the tool expects:
-
-- Ollama running at `http://127.0.0.1:11434`
-- Model name `gemma4:e4b`
-- Worksheet `Sheet1`
-- API providers, if configured, saved under `~/.localeforge/settings.json`
-
-## Privacy
-
-LocaleForge is designed for local localization workflows.
-
-- Workbook content stays on your machine unless you choose an API provider
-- Local mode sends model calls only to your Ollama instance
-- API mode sends prompt content to the provider you configured
-- Sensitive test files are excluded from Git with [`.gitignore`](D:\e4b\.gitignore)
-
-You should still review your local machine, model setup, and access controls for your own environment.
-
-## Requirements
-
-- Python 3.11 or newer recommended
-- [Ollama](https://ollama.com/) installed locally
-- Python packages from [`requirements.txt`](D:\e4b\requirements.txt)
-
-Install dependencies:
+## Install
 
 ```powershell
 python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
-Verify Ollama:
+## Configure A Provider Once
+
+Use an environment variable for the API key so secrets do not land in shell history:
 
 ```powershell
-ollama list
-ollama serve
+$env:OPENAI_API_KEY="sk-..."
+localeforge provider add default-api `
+  --base-url https://api.example.com/v1 `
+  --api-key-env OPENAI_API_KEY `
+  --default-model gpt-4.1-mini `
+  --set-default
 ```
 
-## CLI Usage
+After this, tasks and workflow calls do not need to repeat the API key or base URL.
 
-The user-facing entrypoint is unchanged:
+Check the environment:
 
 ```powershell
-python .\check_excel_translations.py
+localeforge doctor --json
 ```
 
-Run term extraction:
+## Run
+
+Single CSV or Excel file:
 
 ```powershell
-python .\check_excel_translations.py --task term-extraction
+localeforge run --task tasks/proofread.md --input data/source.csv
+localeforge run --task tasks/proofread.md --input data/source.xlsx
 ```
 
-Run with explicit paths:
+Folder batch:
 
 ```powershell
-python .\check_excel_translations.py --task term-extraction --input "D:\path\to\input.xlsx" --output "D:\path\to\input_checked.xlsx"
+localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out
 ```
 
-Common options:
+Directory input recursively scans `.csv` and `.xlsx` files and mirrors the structure under `--output-dir`.
+
+## Validate Before Running
+
+`validate` checks a task/input combination without calling the model or writing output files:
 
 ```powershell
-python .\check_excel_translations.py `
-  --task "english-check" `
-  --input "D:\path\to\input.xlsx" `
-  --output "D:\path\to\input_checked.xlsx" `
-  --sheet "Sheet1" `
-  --source-col "C" `
-  --result-col "F" `
-  --prompt-file ".\translation_checker_prompt.txt" `
-  --start-row 2 `
-  --execution-mode "local" `
-  --model "gemma4:e4b" `
-  --api-url "http://127.0.0.1:11434" `
-  --concurrency 1
+localeforge validate --task tasks/proofread.md --input data/raw --output-dir data/out --json
 ```
 
-For a saved API provider:
+It checks the task schema, files, worksheets, source column, target column behavior, output path shape, and provider resolution.
+
+## Task Files
+
+A task is one Markdown file. YAML front matter stores durable configuration; the Markdown body is the system prompt.
+
+Minimal transform task:
+
+```markdown
+---
+id: proofread
+mode: transform
+---
+
+Polish the user text.
+Return only the polished text. Do not explain.
+```
+
+Default table contract:
+
+- input column: `source`
+- output column: `target`
+- header row: `1`
+- first data row: `2`
+
+Column matching is case-insensitive. The `target` column is created when missing.
+
+Override columns only when a file uses a different schema:
 
 ```powershell
-python .\check_excel_translations.py `
-  --execution-mode "api" `
-  --provider "my-openai-compatible-provider"
+localeforge run --task tasks/proofread.md --input data/a.xlsx --input-col C --output-col F
 ```
 
-CLI defaults now load from `~/.localeforge/settings.json`, so once you save a provider and default model in the desktop app, the CLI can reuse them.
+## Task Modes
 
-Prompt template notes:
+`transform` is the default mode. The model returns final text, and LocaleForge writes it to `target`.
 
-- English check default: `translation_checker_prompt.txt`
-- Term extraction default: `term_extractor_prompt.txt`
-- Required placeholders: `{{STATUS_OK}}`, `{{STATUS_SUSPECT}}`, `{{TEXT}}`
-- For `term-extraction`, `{{STATUS_SUSPECT}}` is mapped to `提取到术语`
-- You can override the default prompt with `--prompt-file`
+`status-json` is for QA, extraction, and classification tasks. The model returns:
 
-## Desktop UI
+```json
+{"status":"OK","spans":[]}
+```
 
-The user-facing desktop entrypoint is also unchanged:
+The `status` value is written to `target`. If `output.details_column` is configured, `spans` are joined with ` | ` and written there.
+
+## Reports And JSON
+
+Use `--json` for machine-readable stdout and `--report` for a JSON file:
 
 ```powershell
-python .\app.py
+localeforge run `
+  --task tasks/proofread.md `
+  --input data/raw `
+  --output-dir data/out `
+  --report reports/run.json `
+  --json
 ```
 
-The UI lets you:
+Exit codes:
 
-- Choose an Excel file
-- Select the worksheet
-- Switch between the two tasks
-- Configure source and output columns
-- Switch between `local` and `api` execution modes
-- Change the local Ollama model, URL, and concurrency
-- Choose a saved API provider, tested model, and concurrency
-- Open a dedicated `LLM Settings...` window to add, test, edit, and delete providers
-- Use a different prompt template file for prompt debugging
-- Run the task and review progress in a log panel
+```text
+0 success
+1 usage or configuration error
+2 input or output file error
+3 model or provider error
+4 partial failure in folder batch
+```
 
-Provider notes:
+## Privacy
 
-- Custom API providers must pass a `GET /models` test before they can be saved
-- Provider API keys, saved models, and runtime defaults are persisted across restarts
-- API mode keeps the Run button disabled until the selected provider has been tested successfully
-
-When you switch tasks, the prompt file auto-switches only if it is still using the previous task's default prompt.
-
-## Output
-
-For each processed row, LocaleForge writes:
-
-- A task status in the result column
-- A detail list in the next column
-
-Examples:
-
-- `english-check`: suspicious untranslated English spans
-- `term-extraction`: extracted game terms
-
-For `term-extraction`, LocaleForge also adds a `TermSummary` worksheet that deduplicates the extracted terms and shows how many rows each term appeared in.
-
-The original workbook is left unchanged. Results are saved to a new file ending in `_checked.xlsx` unless you provide another output path.
-
-## Project Structure
-
-- [`check_excel_translations.py`](D:\e4b\check_excel_translations.py): thin CLI wrapper
-- [`app.py`](D:\e4b\app.py): thin desktop wrapper
-- [`localeforge`](D:\e4b\localeforge): shared package for config, prompts, rules, runtime, model integration, workbook logic, and UI
-- [`translation_checker_prompt.txt`](D:\e4b\translation_checker_prompt.txt): English leak check prompt
-- [`term_extractor_prompt.txt`](D:\e4b\term_extractor_prompt.txt): Game term extraction prompt
-- [`tests`](D:\e4b\tests): unit tests for extracted modules and behavior-preserving workbook flows
-- [`requirements.txt`](D:\e4b\requirements.txt): Python dependencies
+LocaleForge writes new output files and leaves source files unchanged. Input text is sent only to the selected model provider. API keys are stored in local settings and are redacted from reports and JSON output.

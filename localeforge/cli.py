@@ -1,188 +1,264 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from .config.settings import AppSettings, get_provider, load_settings
-from .config.tasks import DEFAULT_TASK_ID, STATUS_EMPTY, STATUS_OK, TASK_CONFIGS, TaskConfig, get_task_config
-from .prompts import default_prompt_path
-from .runtime import TaskRunRequest, run_task
-from .types import ProgressCallback
-from .workbook import default_input_path, default_output_path
-
-
-def build_cli_progress_callback(task_config: TaskConfig) -> ProgressCallback:
-    def cli_progress(offset: int, total_rows: int, row_idx: int, stats: dict[str, int]) -> None:
-        if offset % 100 != 0 and offset != total_rows:
-            return
-        print(
-            f"[{offset}/{total_rows}] row={row_idx} "
-            f"OK={stats[STATUS_OK]} "
-            f"{task_config.hit_status}={stats[task_config.hit_status]} "
-            f"EMPTY={stats[STATUS_EMPTY]} "
-            f"MODEL={stats['MODEL_CALLS']}"
-        )
-
-    return cli_progress
+from .engine import RunOptions, run_task, validate_task
+from .errors import ConfigError, LocaleForgeError, exit_code_for_error
+from .providers import OllamaClient, OpenAICompatibleClient
+from .report import RunReport
+from .settings import (
+    DEFAULT_BASE_URL,
+    ProviderConfig,
+    add_provider,
+    get_provider,
+    load_settings,
+    save_settings,
+    settings_to_public_dict,
+)
+from .task_profile import TaskProfile, load_task_profile
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a workbook QA or extraction task with either local Ollama or an OpenAI-compatible API."
+        prog="localeforge",
+        description="Agent-first CLI for LLM batch processing over Excel and CSV files.",
     )
-    parser.add_argument(
-        "--input",
-        default=str(default_input_path()),
-        help="Path to the source Excel file.",
-    )
-    parser.add_argument(
-        "--output",
-        help="Path to the output Excel file. Defaults to <input>_checked.xlsx.",
-    )
-    parser.add_argument(
-        "--task",
-        default=DEFAULT_TASK_ID,
-        choices=list(TASK_CONFIGS),
-        help="Task to run. Default: english-check",
-    )
-    parser.add_argument(
-        "--sheet",
-        default="Sheet1",
-        help="Worksheet name to process.",
-    )
-    parser.add_argument(
-        "--source-col",
-        default="C",
-        help="Column to inspect. Default: C",
-    )
-    parser.add_argument(
-        "--result-col",
-        default="F",
-        help="Column to write results to. Default: F",
-    )
-    parser.add_argument(
-        "--model",
-        help="Model name. Defaults to the saved model for the selected execution mode.",
-    )
-    parser.add_argument(
-        "--prompt-file",
-        help="Path to the prompt template file. Defaults to the selected task prompt.",
-    )
-    parser.add_argument(
-        "--start-row",
-        type=int,
-        default=2,
-        help="First row to process. Default: 2",
-    )
-    parser.add_argument(
-        "--api-url",
-        help="Base URL for the selected runtime. Local mode defaults to the saved Ollama URL.",
-    )
-    parser.add_argument(
-        "--execution-mode",
-        choices=["local", "api"],
-        help="Choose whether to run against local Ollama or an OpenAI-compatible API provider.",
-    )
-    parser.add_argument(
-        "--provider",
-        help="Saved provider id to use in API mode.",
-    )
-    parser.add_argument(
-        "--concurrency",
-        type=int,
-        help="Maximum number of concurrent model requests.",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=120.0,
-        help="HTTP timeout in seconds for Ollama API calls.",
-    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run = subparsers.add_parser("run", help="Run a task against one file or a folder.")
+    _add_task_run_args(run)
+    run.add_argument("--dry-run", action="store_true", help="Validate without calling a model or writing outputs.")
+
+    validate = subparsers.add_parser("validate", help="Validate a task/input run without model calls or writes.")
+    _add_task_run_args(validate)
+
+    doctor = subparsers.add_parser("doctor", help="Check global LocaleForge runtime health.")
+    doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    doctor.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds.")
+
+    provider = subparsers.add_parser("provider", help="Manage saved model providers.")
+    provider_subparsers = provider.add_subparsers(dest="provider_command", required=True)
+
+    provider_add = provider_subparsers.add_parser("add", help="Add or update a provider.")
+    provider_add.add_argument("provider_id")
+    provider_add.add_argument("--base-url", required=True)
+    provider_add.add_argument("--api-key")
+    provider_add.add_argument("--api-key-env")
+    provider_add.add_argument("--default-model", required=True)
+    provider_add.add_argument("--set-default", action="store_true")
+    provider_add.add_argument("--json", action="store_true")
+
+    provider_list = provider_subparsers.add_parser("list", help="List saved providers.")
+    provider_list.add_argument("--json", action="store_true")
+
     return parser
 
 
-def _build_request_from_args(args: argparse.Namespace, settings: AppSettings) -> TaskRunRequest:
-    task_config = get_task_config(args.task)
-    input_path = Path(args.input).expanduser().resolve()
-    output_path = Path(args.output).expanduser().resolve() if args.output else default_output_path(input_path)
-    prompt_path = (
-        Path(args.prompt_file).expanduser().resolve()
-        if args.prompt_file
-        else default_prompt_path(task_config.task_id)
-    )
-    execution_mode = args.execution_mode or settings.defaults.execution_mode
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "provider":
+            return _handle_provider(args)
+        if args.command == "doctor":
+            return _handle_doctor(args)
+        if args.command == "validate":
+            return _handle_validate(args)
+        if args.command == "run":
+            return _handle_run(args)
+    except LocaleForgeError as exc:
+        return _handle_error(exc, json_output=bool(getattr(args, "json", False)))
+    return 1
 
-    provider_id: str | None = None
-    api_key: str | None = None
-    api_url = args.api_url or settings.defaults.local.base_url
-    model = args.model or settings.defaults.local.model
-    concurrency = args.concurrency or settings.defaults.local.concurrency
+
+def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = True) -> None:
+    parser.add_argument("--task", required=True, help="Path to a Markdown task file.")
+    parser.add_argument("--input", required=True, help="Input file or directory.")
+    parser.add_argument("--output", help="Single-file output path.")
+    parser.add_argument("--output-dir", help="Directory output root for folder input.")
+    parser.add_argument("--input-col", help="Override task input column.")
+    parser.add_argument("--output-col", help="Override task output column.")
+    parser.add_argument("--sheet", help="Override task Excel worksheet.")
+    parser.add_argument("--report", help="Write a JSON report to this path.")
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    if include_model:
+        parser.add_argument("--execution-mode", choices=["local", "api"])
+        parser.add_argument("--provider")
+        parser.add_argument("--model")
+        parser.add_argument("--base-url", help="Override provider/local base URL.")
+        parser.add_argument("--timeout", type=float, default=120.0)
+
+
+def _handle_provider(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    if args.provider_command == "add":
+        provider = ProviderConfig(
+            provider_id=args.provider_id,
+            base_url=args.base_url,
+            api_key=args.api_key or "",
+            api_key_env=args.api_key_env,
+            default_model=args.default_model,
+            models=[args.default_model],
+        )
+        add_provider(settings, provider, set_default=args.set_default)
+        save_settings(settings)
+        payload = settings_to_public_dict(settings)
+        _emit(payload, json_output=args.json)
+        return 0
+
+    if args.provider_command == "list":
+        payload = settings_to_public_dict(settings)
+        _emit(payload, json_output=args.json)
+        return 0
+    return 1
+
+
+def _handle_doctor(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    payload: dict[str, object] = {
+        "status": "success",
+        "settings": settings_to_public_dict(settings),
+        "checks": [],
+    }
+    checks = payload["checks"]
+    assert isinstance(checks, list)
+
+    try:
+        client = _create_client_for_effective_config(None, settings, argparse.Namespace(
+            execution_mode=None,
+            provider=None,
+            model=None,
+            base_url=None,
+            timeout=args.timeout,
+        ))
+        models = client.ensure_available()
+        checks.append({"name": "provider", "status": "success", "models": models})
+    except LocaleForgeError as exc:
+        payload["status"] = "error"
+        checks.append({"name": "provider", "status": "error", "error": str(exc)})
+    _emit(payload, json_output=args.json)
+    return 0 if payload["status"] == "success" else 3
+
+
+def _handle_validate(args: argparse.Namespace) -> int:
+    task_path = Path(args.task).expanduser().resolve()
+    profile = load_task_profile(task_path)
+    settings = load_settings()
+    _validate_provider_resolution(profile, settings, args)
+    report = validate_task(profile, task_path, _run_options(args, profile, settings))
+    _write_report(report, args.report)
+    _emit(report.to_dict(), json_output=args.json)
+    if report.status == "success":
+        return 0
+    return 4 if report.status == "partial_failure" else 2
+
+
+def _handle_run(args: argparse.Namespace) -> int:
+    task_path = Path(args.task).expanduser().resolve()
+    profile = load_task_profile(task_path)
+    settings = load_settings()
+    options = _run_options(args, profile, settings)
+    if args.dry_run:
+        _validate_provider_resolution(profile, settings, args)
+        report = validate_task(profile, task_path, options)
+    else:
+        client = _create_client_for_effective_config(profile, settings, args)
+        client.ensure_available()
+        report = run_task(profile, task_path, options, client)
+
+    _write_report(report, args.report)
+    _emit(report.to_dict(), json_output=args.json)
+    if report.status == "success":
+        return 0
+    return 4 if report.status == "partial_failure" else 2
+
+
+def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> RunOptions:
+    execution_mode = getattr(args, "execution_mode", None) or profile.model.execution_mode
+    provider = getattr(args, "provider", None) or profile.model.provider
+    model = getattr(args, "model", None) or profile.model.name
+    if settings is not None:
+        defaults = settings.defaults  # type: ignore[attr-defined]
+        execution_mode = execution_mode or defaults.execution_mode
+        provider = provider or defaults.provider_id
+        model = model or defaults.model
+    return RunOptions(
+        input_path=Path(args.input).expanduser().resolve(),
+        output_dir=Path(args.output_dir).expanduser().resolve() if args.output_dir else None,
+        output_path=Path(args.output).expanduser().resolve() if args.output else None,
+        input_col=args.input_col,
+        output_col=args.output_col,
+        sheet=args.sheet,
+        execution_mode=execution_mode or "local",
+        provider=provider,
+        model=model or "",
+    )
+
+
+def _create_client_for_effective_config(
+    profile: TaskProfile | None,
+    settings: object,
+    args: argparse.Namespace,
+):
+    defaults = settings.defaults  # type: ignore[attr-defined]
+    execution_mode = getattr(args, "execution_mode", None) or (profile.model.execution_mode if profile else None) or defaults.execution_mode
+    model = getattr(args, "model", None) or (profile.model.name if profile else None) or defaults.model
+    base_url = getattr(args, "base_url", None)
 
     if execution_mode == "api":
-        provider_id = args.provider or settings.defaults.api.provider_id
-        provider = get_provider(settings, provider_id)
+        provider_id = getattr(args, "provider", None) or (profile.model.provider if profile else None) or defaults.provider_id
+        provider = get_provider(settings, provider_id)  # type: ignore[arg-type]
         if provider is None:
-            raise RuntimeError("API mode requires a saved provider. Configure one in the desktop app first.")
-        if not provider.models:
-            raise RuntimeError(f"Provider `{provider.provider_id}` has not been tested yet.")
-        api_url = args.api_url or provider.base_url
-        api_key = provider.api_key
-        model = args.model or settings.defaults.api.model or provider.models[0]
-        concurrency = args.concurrency or settings.defaults.api.concurrency
+            raise ConfigError("API execution requires a saved provider. Run `localeforge provider add` first.")
+        return OpenAICompatibleClient(
+            base_url=base_url or provider.base_url,
+            api_key=provider.api_key,
+            model=model or provider.default_model,
+            timeout=getattr(args, "timeout", 120.0),
+        )
 
-    return TaskRunRequest(
-        task_config=task_config,
-        input_path=input_path,
-        output_path=output_path,
-        prompt_path=prompt_path,
-        sheet_name=args.sheet,
-        source_col=args.source_col,
-        result_col=args.result_col,
-        start_row=args.start_row,
-        execution_mode=execution_mode,
-        provider_id=provider_id,
-        api_url=api_url,
-        api_key=api_key,
+    return OllamaClient(
+        base_url=base_url or DEFAULT_BASE_URL,
         model=model,
-        concurrency=concurrency,
-        timeout=args.timeout,
+        timeout=getattr(args, "timeout", 120.0),
     )
 
 
-def main() -> int:
-    settings = load_settings()
-    parser = build_parser()
-    args = parser.parse_args()
+def _validate_provider_resolution(profile: TaskProfile, settings: object, args: argparse.Namespace) -> None:
+    defaults = settings.defaults  # type: ignore[attr-defined]
+    execution_mode = getattr(args, "execution_mode", None) or profile.model.execution_mode or defaults.execution_mode
+    if execution_mode != "api":
+        return
+    provider_id = getattr(args, "provider", None) or profile.model.provider or defaults.provider_id
+    provider = get_provider(settings, provider_id)  # type: ignore[arg-type]
+    if provider is None:
+        raise ConfigError("API execution requires a saved provider. Run `localeforge provider add` first.")
 
-    request = _build_request_from_args(args, settings)
 
-    if not request.input_path.exists():
-        print(f"Input file does not exist: {request.input_path}", file=sys.stderr)
-        return 1
+def _write_report(report: RunReport, report_path: str | None) -> None:
+    if not report_path:
+        return
+    path = Path(report_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(report.to_json() + "\n", encoding="utf-8")
 
-    print(f"Task  : {request.task_config.task_id}")
-    print(f"Mode  : {request.execution_mode}")
-    if request.provider_id:
-        print(f"Provider: {request.provider_id}")
-    print(f"Input : {request.input_path}")
-    print(f"Output: {request.output_path}")
-    print(f"Sheet : {request.sheet_name}")
-    print(f"Model : {request.model}")
-    print(f"Prompt: {request.prompt_path}")
 
-    result = run_task(
-        request,
-        progress_callback=build_cli_progress_callback(request.task_config),
-    )
+def _emit(payload: object, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if isinstance(payload, dict) and "status" in payload:
+        print(f"status: {payload['status']}")
+    else:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    print("\nFinished.")
-    print(f"Rows processed : {result.total_rows}")
-    print(f"{STATUS_OK:<12}: {result.stats[STATUS_OK]}")
-    print(f"{request.task_config.hit_status:<12}: {result.stats[request.task_config.hit_status]}")
-    print(f"{STATUS_EMPTY:<12}: {result.stats[STATUS_EMPTY]}")
-    print(f"MODEL_CALLS  : {result.stats['MODEL_CALLS']}")
-    print(f"CACHE_HITS   : {result.stats['CACHE_HITS']}")
-    if request.task_config.summary_sheet_name is not None:
-        print(f"SUMMARY_TAB  : {request.task_config.summary_sheet_name}")
-    return 0
+
+def _handle_error(error: LocaleForgeError, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps({"status": "error", "errors": [str(error)]}, ensure_ascii=False, indent=2))
+    else:
+        print(f"error: {error}", file=sys.stderr)
+    return exit_code_for_error(error)
