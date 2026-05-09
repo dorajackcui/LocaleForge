@@ -4,9 +4,11 @@ import tempfile
 import threading
 import time
 import unittest
+from io import StringIO
 from pathlib import Path
 
 from localeforge.engine import RunOptions, run_task, validate_task
+from localeforge.progress import ProgressReporter
 from localeforge.providers import StaticModelClient
 from localeforge.task_profile import load_task_profile
 
@@ -82,6 +84,61 @@ class EngineTests(unittest.TestCase):
             output_text = report.files[0].output.read_text(encoding="utf-8")
             self.assertIn("A", output_text)
             self.assertIn("D", output_text)
+
+    def test_progress_streams_as_model_calls_finish(self) -> None:
+        class BlockingClient:
+            def __init__(self) -> None:
+                self.fast_done = threading.Event()
+                self.slow_started = threading.Event()
+                self.release_slow = threading.Event()
+
+            def ensure_available(self) -> list[str]:
+                return ["blocking"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                if user_text == "fast":
+                    self.fast_done.set()
+                    return "FAST"
+                self.slow_started.set()
+                if not self.release_slow.wait(timeout=5):
+                    raise AssertionError("slow request was not released")
+                return "SLOW"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nfast\nslow\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = BlockingClient()
+            progress_stream = StringIO()
+            errors: list[BaseException] = []
+
+            def run() -> None:
+                try:
+                    run_task(
+                        profile,
+                        task_path,
+                        RunOptions(input_path=input_path, concurrency=2),
+                        client,
+                        progress=ProgressReporter(mode="text", stream=progress_stream),
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            self.assertTrue(client.fast_done.wait(timeout=2))
+            self.assertTrue(client.slow_started.wait(timeout=2))
+            time.sleep(0.05)
+            observed = progress_stream.getvalue()
+
+            client.release_slow.set()
+            thread.join(timeout=2)
+
+            self.assertIn("rows 1/2", observed)
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
 
     def test_status_json_writes_each_json_field_to_a_column(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -159,13 +160,14 @@ def _generate_pending(
     options: RunOptions,
     client: ModelClient,
     pending: dict[str, list[int]],
-) -> list[tuple[str, ProcessedResult]]:
+) -> Iterator[tuple[str, ProcessedResult]]:
     if not pending:
-        return []
+        return
     if options.concurrency <= 1:
-        return [(source_text, _generate_processed(profile, client, source_text)) for source_text in pending]
+        for source_text in pending:
+            yield source_text, _generate_processed(profile, client, source_text)
+        return
 
-    results: list[tuple[str, ProcessedResult]] = []
     with ThreadPoolExecutor(max_workers=options.concurrency) as executor:
         futures = {
             executor.submit(_generate_processed, profile, client, source_text): source_text
@@ -173,8 +175,7 @@ def _generate_pending(
         }
         for future in as_completed(futures):
             source_text = futures[future]
-            results.append((source_text, future.result()))
-    return results
+            yield source_text, future.result()
 
 
 def _generate_processed(profile: TaskProfile, client: ModelClient, source_text: str) -> ProcessedResult:
