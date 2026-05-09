@@ -4,7 +4,7 @@ LocaleForge is an agent-first CLI for running LLM tasks over Excel and CSV files
 
 The CLI supports one file or a whole folder with the same command.
 
-Agents should start with [AGENTS.md](AGENTS.md). Provider setup examples live in [docs/provider-configuration-example.md](docs/provider-configuration-example.md).
+Agents should start with [AGENTS.md](AGENTS.md). Copy [.env.example](.env.example) to `.env` for local provider secrets.
 
 ## Install
 
@@ -18,9 +18,8 @@ python -m pip install -e .
 Put the API key in a local `.env` file so secrets do not land in shell history or task files:
 
 ```powershell
-@"
-OPENAI_API_KEY=sk-your-key
-"@ | Set-Content -Encoding UTF8 .env
+Copy-Item .env.example .env
+# Edit .env and set OPENAI_API_KEY.
 
 localeforge provider add default-api `
   --base-url https://api.example.com/v1 `

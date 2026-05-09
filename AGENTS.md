@@ -23,18 +23,27 @@ Before running a task, check the environment:
 localeforge doctor --json
 ```
 
-If the provider is not configured, see:
-
-```text
-docs/provider-configuration-example.md
-```
-
 Expected default credential shape:
 
 ```text
+copy .env.example to .env
 .env contains OPENAI_API_KEY=...
 provider settings reference OPENAI_API_KEY by name
 task files do not contain secrets
+```
+
+Configure provider once:
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env and set OPENAI_API_KEY.
+
+localeforge provider add default-api `
+  --base-url https://api.example.com/v1 `
+  --api-key-env OPENAI_API_KEY `
+  --default-model gpt-4.1-mini `
+  --set-default `
+  --json
 ```
 
 ## Validate Before Run
