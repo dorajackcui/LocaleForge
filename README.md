@@ -4,7 +4,7 @@ LocaleForge is an agent-first CLI for running LLM tasks over Excel and CSV files
 
 The CLI supports one file or a whole folder with the same command.
 
-Agents should start with [AGENTS.md](AGENTS.md). Copy [.env.example](.env.example) to `.env` for local provider secrets.
+Agents should start with [AGENTS.md](AGENTS.md). Copy [.env.example](.env.example) to `.env` for local provider configuration.
 
 ## Install
 
@@ -15,14 +15,14 @@ python -m pip install -e .
 
 ## Configure A Provider Once
 
-Put the API key in a local `.env` file so secrets do not land in shell history or task files:
+Put the base URL and API key in a local `.env` file so repeated runs do not need provider details:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set OPENAI_API_KEY.
+# Edit .env and set OPENAI_BASE_URL and OPENAI_API_KEY.
 
 localeforge provider add default-api `
-  --base-url https://api.example.com/v1 `
+  --base-url-env OPENAI_BASE_URL `
   --api-key-env OPENAI_API_KEY `
   --default-model gpt-4.1-mini `
   --set-default
@@ -131,4 +131,4 @@ Exit codes:
 
 ## Privacy
 
-LocaleForge writes new output files and leaves source files unchanged. Input text is sent only to the selected model provider. API keys are stored in local settings and are redacted from reports and JSON output.
+LocaleForge writes new output files and leaves source files unchanged. Input text is sent only to the selected model provider. Secrets stay in local `.env` files; provider settings store env var names and are redacted from reports and JSON output.

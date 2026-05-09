@@ -15,6 +15,7 @@ from .settings import (
     add_provider,
     get_provider,
     load_settings,
+    resolve_base_url,
     resolve_api_key,
     save_settings,
     settings_to_public_dict,
@@ -45,7 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     provider_add = provider_subparsers.add_parser("add", help="Add or update a provider.")
     provider_add.add_argument("provider_id")
-    provider_add.add_argument("--base-url", required=True)
+    provider_add.add_argument("--base-url")
+    provider_add.add_argument("--base-url-env")
     provider_add.add_argument("--api-key")
     provider_add.add_argument("--api-key-env")
     provider_add.add_argument("--default-model", required=True)
@@ -98,7 +100,8 @@ def _handle_provider(args: argparse.Namespace) -> int:
     if args.provider_command == "add":
         provider = ProviderConfig(
             provider_id=args.provider_id,
-            base_url=args.base_url,
+            base_url=args.base_url or "",
+            base_url_env=args.base_url_env,
             api_key=args.api_key or "",
             api_key_env=args.api_key_env,
             default_model=args.default_model,
@@ -214,11 +217,14 @@ def _create_client_for_effective_config(
         provider = get_provider(settings, provider_id)  # type: ignore[arg-type]
         if provider is None:
             raise ConfigError("API execution requires a saved provider. Run `localeforge provider add` first.")
+        resolved_base_url = base_url or resolve_base_url(provider)
+        if not resolved_base_url:
+            raise ConfigError(f"Provider `{provider.provider_id}` requires a base URL. Set --base-url-env or --base-url.")
         api_key = resolve_api_key(provider)
         if not api_key:
             raise ConfigError(f"Provider `{provider.provider_id}` requires API key env `{provider.api_key_env}`.")
         return OpenAICompatibleClient(
-            base_url=base_url or provider.base_url,
+            base_url=resolved_base_url,
             api_key=api_key,
             model=model or provider.default_model,
             timeout=getattr(args, "timeout", 120.0),
@@ -240,6 +246,8 @@ def _validate_provider_resolution(profile: TaskProfile, settings: object, args: 
     provider = get_provider(settings, provider_id)  # type: ignore[arg-type]
     if provider is None:
         raise ConfigError("API execution requires a saved provider. Run `localeforge provider add` first.")
+    if not resolve_base_url(provider):
+        raise ConfigError(f"Provider `{provider.provider_id}` requires a base URL. Set --base-url-env or --base-url.")
     if not resolve_api_key(provider):
         raise ConfigError(f"Provider `{provider.provider_id}` requires API key env `{provider.api_key_env}`.")
 

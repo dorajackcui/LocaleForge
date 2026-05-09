@@ -27,7 +27,9 @@ Expected default credential shape:
 
 ```text
 copy .env.example to .env
+.env contains OPENAI_BASE_URL=...
 .env contains OPENAI_API_KEY=...
+provider settings reference OPENAI_BASE_URL by name
 provider settings reference OPENAI_API_KEY by name
 task files do not contain secrets
 ```
@@ -36,10 +38,10 @@ Configure provider once:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set OPENAI_API_KEY.
+# Edit .env and set OPENAI_BASE_URL and OPENAI_API_KEY.
 
 localeforge provider add default-api `
-  --base-url https://api.example.com/v1 `
+  --base-url-env OPENAI_BASE_URL `
   --api-key-env OPENAI_API_KEY `
   --default-model gpt-4.1-mini `
   --set-default `

@@ -19,6 +19,7 @@ _LOADED_ENV_FILES: set[Path] = set()
 class ProviderConfig:
     provider_id: str
     base_url: str
+    base_url_env: str | None = None
     api_key: str = ""
     api_key_env: str | None = None
     default_model: str = ""
@@ -92,9 +93,15 @@ def get_provider(settings: AppSettings, provider_id: str | None) -> ProviderConf
 def add_provider(settings: AppSettings, provider: ProviderConfig, set_default: bool = False) -> ProviderConfig:
     provider.provider_id = provider.provider_id.strip()
     provider.base_url = provider.base_url.strip().rstrip("/")
+    provider.base_url_env = _optional_str(provider.base_url_env)
     provider.default_model = provider.default_model.strip()
     provider.api_key_env = _optional_str(provider.api_key_env)
+    resolved_base_url = resolve_base_url(provider)
     resolved_api_key = resolve_api_key(provider)
+    if provider.base_url_env:
+        provider.base_url = ""
+    else:
+        provider.base_url = resolved_base_url
     if provider.api_key_env:
         provider.api_key = ""
     else:
@@ -103,8 +110,8 @@ def add_provider(settings: AppSettings, provider: ProviderConfig, set_default: b
 
     if not provider.provider_id:
         raise ConfigError("Provider id is required.")
-    if not provider.base_url:
-        raise ConfigError("Provider base URL is required.")
+    if not resolved_base_url:
+        raise ConfigError("Provider base URL is required. Use --base-url-env or --base-url.")
     if not provider.default_model:
         raise ConfigError("Provider default model is required.")
     if not resolved_api_key:
@@ -116,6 +123,7 @@ def add_provider(settings: AppSettings, provider: ProviderConfig, set_default: b
         saved = provider
     else:
         existing.base_url = provider.base_url
+        existing.base_url_env = provider.base_url_env
         existing.api_key = provider.api_key
         existing.api_key_env = provider.api_key_env
         existing.default_model = provider.default_model
@@ -127,6 +135,15 @@ def add_provider(settings: AppSettings, provider: ProviderConfig, set_default: b
         settings.defaults.provider_id = saved.provider_id
         settings.defaults.model = saved.default_model
     return saved
+
+
+def resolve_base_url(provider: ProviderConfig) -> str:
+    if provider.base_url:
+        return provider.base_url.strip().rstrip("/")
+    if provider.base_url_env:
+        load_local_env()
+        return os.environ.get(provider.base_url_env, "").strip().rstrip("/")
+    return ""
 
 
 def resolve_api_key(provider: ProviderConfig) -> str:
@@ -174,6 +191,7 @@ def _provider_from_dict(data: dict[str, Any]) -> ProviderConfig:
     return ProviderConfig(
         provider_id=str(data.get("provider_id", "")).strip(),
         base_url=str(data.get("base_url", "")).strip(),
+        base_url_env=_optional_str(data.get("base_url_env")),
         api_key=str(data.get("api_key", "")).strip(),
         api_key_env=_optional_str(data.get("api_key_env")),
         default_model=str(data.get("default_model", "")).strip(),
