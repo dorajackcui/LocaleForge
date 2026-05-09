@@ -12,6 +12,7 @@ from .errors import ConfigError
 SETTINGS_ENV = "LOCALEFORGE_SETTINGS_PATH"
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_LOCAL_MODEL = "gemma4:e4b"
+_LOADED_ENV_FILES: set[Path] = set()
 
 
 @dataclass
@@ -93,7 +94,11 @@ def add_provider(settings: AppSettings, provider: ProviderConfig, set_default: b
     provider.base_url = provider.base_url.strip().rstrip("/")
     provider.default_model = provider.default_model.strip()
     provider.api_key_env = _optional_str(provider.api_key_env)
-    provider.api_key = resolve_api_key(provider)
+    resolved_api_key = resolve_api_key(provider)
+    if provider.api_key_env:
+        provider.api_key = ""
+    else:
+        provider.api_key = resolved_api_key
     provider.models = _unique([*provider.models, provider.default_model])
 
     if not provider.provider_id:
@@ -102,7 +107,7 @@ def add_provider(settings: AppSettings, provider: ProviderConfig, set_default: b
         raise ConfigError("Provider base URL is required.")
     if not provider.default_model:
         raise ConfigError("Provider default model is required.")
-    if not provider.api_key:
+    if not resolved_api_key:
         raise ConfigError("Provider API key is required. Use --api-key-env or --api-key.")
 
     existing = get_provider(settings, provider.provider_id)
@@ -128,6 +133,7 @@ def resolve_api_key(provider: ProviderConfig) -> str:
     if provider.api_key:
         return provider.api_key.strip()
     if provider.api_key_env:
+        load_local_env()
         return os.environ.get(provider.api_key_env, "").strip()
     return ""
 
@@ -138,6 +144,30 @@ def settings_to_public_dict(settings: AppSettings) -> dict[str, Any]:
         if provider.get("api_key"):
             provider["api_key"] = "<redacted>"
     return payload
+
+
+def load_local_env(path: Path | str | None = None) -> bool:
+    target = Path(path).expanduser().resolve() if path is not None else (Path.cwd() / ".env").resolve()
+    if target in _LOADED_ENV_FILES:
+        return target.exists()
+    _LOADED_ENV_FILES.add(target)
+    if not target.exists():
+        return False
+
+    for line in target.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].strip()
+        if "=" not in stripped:
+            continue
+        key, value = stripped.split("=", maxsplit=1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = _clean_env_value(value)
+    return True
 
 
 def _provider_from_dict(data: dict[str, Any]) -> ProviderConfig:
@@ -173,3 +203,10 @@ def _unique(values: list[object]) -> list[str]:
         if item and item not in result:
             result.append(item)
     return result
+
+
+def _clean_env_value(value: str) -> str:
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
+        return cleaned[1:-1]
+    return cleaned

@@ -15,10 +15,13 @@ python -m pip install -e .
 
 ## Configure A Provider Once
 
-Use an environment variable for the API key so secrets do not land in shell history:
+Put the API key in a local `.env` file so secrets do not land in shell history or task files:
 
 ```powershell
-$env:OPENAI_API_KEY="sk-..."
+@"
+OPENAI_API_KEY=sk-your-key
+"@ | Set-Content -Encoding UTF8 .env
+
 localeforge provider add default-api `
   --base-url https://api.example.com/v1 `
   --api-key-env OPENAI_API_KEY `

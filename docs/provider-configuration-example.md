@@ -8,14 +8,16 @@ Settings are stored locally at:
 ~/.localeforge/settings.json
 ```
 
-API keys are redacted from `provider list`, `doctor`, JSON reports, and normal logs.
+API keys should live in a local `.env` file. Provider settings store the env var name, base URL, and default model, but not the secret itself when `--api-key-env` is used.
 
-## Recommended: API Key From Environment
+## Recommended: API Key From Local `.env`
 
 PowerShell:
 
 ```powershell
-$env:OPENAI_API_KEY="sk-your-key"
+@"
+OPENAI_API_KEY=sk-your-key
+"@ | Set-Content -Encoding UTF8 .env
 
 localeforge provider add default-api `
   --base-url https://api.example.com/v1 `
@@ -34,9 +36,11 @@ localeforge run --task tasks/proofread.md --input data/source.csv --json
 
 No API key or base URL is needed in the task file or run command.
 
+LocaleForge loads `.env` from the current working directory before resolving `--api-key-env`.
+
 ## Automation: Direct API Key Argument
 
-Use direct `--api-key` only when the caller controls shell history and logs:
+Use direct `--api-key` only when the caller controls shell history and logs. Direct keys are saved in the local settings file, so this is not the recommended path:
 
 ```powershell
 localeforge provider add default-api `
@@ -69,7 +73,8 @@ Expected shape:
     {
       "provider_id": "default-api",
       "base_url": "https://api.example.com/v1",
-      "api_key": "<redacted>",
+      "api_key": "",
+      "api_key_env": "OPENAI_API_KEY",
       "default_model": "gpt-4.1-mini"
     }
   ]

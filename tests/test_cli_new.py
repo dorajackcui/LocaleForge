@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,6 +35,10 @@ class CliTests(unittest.TestCase):
             )
 
             self.assertEqual(code, 0)
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            provider = payload["providers"][0]
+            self.assertEqual(provider["api_key"], "")
+            self.assertEqual(provider["api_key_env"], "LF_KEY")
 
     def test_validate_json_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

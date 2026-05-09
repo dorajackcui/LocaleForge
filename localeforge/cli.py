@@ -15,6 +15,7 @@ from .settings import (
     add_provider,
     get_provider,
     load_settings,
+    resolve_api_key,
     save_settings,
     settings_to_public_dict,
 )
@@ -213,9 +214,12 @@ def _create_client_for_effective_config(
         provider = get_provider(settings, provider_id)  # type: ignore[arg-type]
         if provider is None:
             raise ConfigError("API execution requires a saved provider. Run `localeforge provider add` first.")
+        api_key = resolve_api_key(provider)
+        if not api_key:
+            raise ConfigError(f"Provider `{provider.provider_id}` requires API key env `{provider.api_key_env}`.")
         return OpenAICompatibleClient(
             base_url=base_url or provider.base_url,
-            api_key=provider.api_key,
+            api_key=api_key,
             model=model or provider.default_model,
             timeout=getattr(args, "timeout", 120.0),
         )
@@ -236,6 +240,8 @@ def _validate_provider_resolution(profile: TaskProfile, settings: object, args: 
     provider = get_provider(settings, provider_id)  # type: ignore[arg-type]
     if provider is None:
         raise ConfigError("API execution requires a saved provider. Run `localeforge provider add` first.")
+    if not resolve_api_key(provider):
+        raise ConfigError(f"Provider `{provider.provider_id}` requires API key env `{provider.api_key_env}`.")
 
 
 def _write_report(report: RunReport, report_path: str | None) -> None:

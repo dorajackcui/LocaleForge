@@ -5,14 +5,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from localeforge.settings import ProviderConfig, add_provider, load_settings, save_settings, settings_to_public_dict
+from localeforge.settings import ProviderConfig, add_provider, load_settings, resolve_api_key, save_settings, settings_to_public_dict
 
 
 class SettingsTests(unittest.TestCase):
-    def test_add_provider_from_env_and_redacts_public_output(self) -> None:
+    def test_add_provider_from_local_env_file_without_persisting_secret(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
-            os.environ["LF_TEST_API_KEY"] = "secret-value"
+            env_path = Path(tmpdir) / ".env"
+            env_path.write_text('LF_TEST_API_KEY="secret-value"\n', encoding="utf-8")
+            previous_cwd = Path.cwd()
+            os.chdir(tmpdir)
+            self.addCleanup(os.chdir, previous_cwd)
             self.addCleanup(os.environ.pop, "LF_TEST_API_KEY", None)
 
             settings = load_settings(path)
@@ -32,8 +36,10 @@ class SettingsTests(unittest.TestCase):
 
             reloaded = load_settings(path)
             self.assertEqual(reloaded.defaults.provider_id, "default-api")
-            self.assertEqual(reloaded.providers[0].api_key, "secret-value")
-            self.assertEqual(settings_to_public_dict(reloaded)["providers"][0]["api_key"], "<redacted>")
+            self.assertEqual(reloaded.providers[0].api_key, "")
+            self.assertEqual(reloaded.providers[0].api_key_env, "LF_TEST_API_KEY")
+            self.assertEqual(resolve_api_key(reloaded.providers[0]), "secret-value")
+            self.assertEqual(settings_to_public_dict(reloaded)["providers"][0]["api_key"], "")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,14 @@ If the provider is not configured, see:
 docs/provider-configuration-example.md
 ```
 
+Expected default credential shape:
+
+```text
+.env contains OPENAI_API_KEY=...
+provider settings reference OPENAI_API_KEY by name
+task files do not contain secrets
+```
+
 ## Validate Before Run
 
 For a single file:
