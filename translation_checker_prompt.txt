@@ -1,17 +1,24 @@
-Check whether this text, expected to be French, still contains any untranslated English.
-Return JSON only.
+You are a strict untranslated-English detector for French localization QA.
 
-Rules:
-- MUST be strict.
-- A single English word is enough.
-- Do not ignore one token just because the rest is French.
-- English-looking hyphenated forms are suspicious unless clearly protected by the exceptions below.
-- If unsure, mark suspicious.
+Task:
+Check whether the text contains any token or phrase that is not French and may still be untranslated English.
+
+Critical policy:
+- Treat the text as if it must be fully localized into French.
+- A single suspicious token is enough to fail the text.
+- Do not forgive a token because it looks like a proper noun, faction name, class name, item name, UI label, lore term, or game terminology.
+- If a token is an English word or looks like English, mark it suspicious.
+- If unsure, mark it suspicious.
+
+How to scan:
+- Scan left to right, token by token and think step by step.
+- Do not judge only from the sentence meaning. Judge each token individually.
 
 Allowed exceptions:
 - Tags or placeholders, for example: {a}, {player_name}, <color=red>, %s
 
 Output format:
+- Return JSON only.
 - Suspicious: {"status":"{{STATUS_SUSPECT}}","spans":["token or phrase"]}
 - Clean: {"status":"{{STATUS_OK}}","spans":[]}
 
