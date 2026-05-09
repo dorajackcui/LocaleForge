@@ -32,6 +32,8 @@ copy .env.example to .env
 .env contains OPENAI_BASE_URL=...
 .env contains OPENAI_API_KEY=...
 .env contains OPENAI_MODEL=...
+.env contains LOCALEFORGE_CONCURRENCY=...
+.env contains LOCALEFORGE_MAX_ATTEMPTS=...
 task files do not contain secrets
 ```
 
@@ -39,7 +41,8 @@ Configure once:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_MODEL.
+# Edit .env and set OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
+# LOCALEFORGE_CONCURRENCY, and LOCALEFORGE_MAX_ATTEMPTS.
 ```
 
 When `.env` is present, LocaleForge automatically uses an API provider named `env`. Do not put API keys in task files or command arguments.
@@ -90,8 +93,6 @@ When creating a new task, copy [tasks/example-task.md](tasks/example-task.md) an
 - `description`: short human summary
 - `input.column` and `output.column`: omit or keep `source` and `target` for the default schema
 - `model`: optional model name shorthand, for example `model: gpt-5.5`
-- `model.concurrency`: optional max concurrent model requests when using nested model config
-- `model.max_attempts`: optional attempts per unique input, including the first try
 - prompt body: the full system prompt sent to the model
 
 Most tasks should omit `model` and use `OPENAI_MODEL` from `.env`. Set `model` only when a task needs a specific model.
@@ -140,16 +141,16 @@ Progress is emitted to stderr, never stdout. This keeps `--json` stdout parseabl
 - `--progress jsonl`: machine-readable progress events on stderr
 - `--progress none`: disable progress
 
-Use `--concurrency N` for per-run model request concurrency. The task front matter can also set:
+Global runtime settings live in `.env`:
 
-```yaml
-model:
-  name: gpt-5.5
-  concurrency: 4
-  max_attempts: 2
+```text
+LOCALEFORGE_CONCURRENCY=4
+LOCALEFORGE_MAX_ATTEMPTS=2
 ```
 
-`max_attempts` defaults to `2`. Retries cover provider errors and LocaleForge response validation errors, including invalid `status-json` output. Use `--max-attempts 1` when a workflow must avoid retry calls.
+Do not put concurrency or retry policy in task files. Use `--concurrency N` or `--max-attempts N` only for a one-off run override.
+
+Retries cover provider errors and LocaleForge response validation errors, including invalid `status-json` output.
 
 ## Exit Codes
 

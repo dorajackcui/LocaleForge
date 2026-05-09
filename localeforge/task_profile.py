@@ -34,8 +34,6 @@ class ModelConfig:
     execution_mode: str | None = None
     provider: str | None = None
     name: str | None = None
-    concurrency: int | None = None
-    max_attempts: int | None = None
 
 
 @dataclass(frozen=True)
@@ -153,14 +151,14 @@ def _model_config(value: object) -> ModelConfig:
     if isinstance(value, str):
         return ModelConfig(name=_optional_str(value))
     data = _mapping(value, "model")
-    concurrency = data.get("concurrency")
-    max_attempts = data.get("max_attempts")
+    runtime_fields = sorted(field for field in ("concurrency", "max_attempts") if field in data)
+    if runtime_fields:
+        fields = ", ".join(f"model.{field}" for field in runtime_fields)
+        raise TaskProfileError(f"{fields} are global runtime settings. Use .env or CLI flags instead.")
     return ModelConfig(
         execution_mode=_optional_str(data.get("execution_mode")),
         provider=_optional_str(data.get("provider")),
         name=_optional_str(data.get("name")),
-        concurrency=_positive_int(concurrency, 1, "model.concurrency") if concurrency is not None else None,
-        max_attempts=_positive_int(max_attempts, 1, "model.max_attempts") if max_attempts is not None else None,
     )
 
 

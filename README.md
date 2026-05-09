@@ -15,11 +15,12 @@ python -m pip install -e .
 
 ## Configure Once
 
-Put the base URL, API key, and default model in a local `.env` file. After that, repeated runs do not need provider details:
+Put the base URL, API key, default model, and run defaults in a local `.env` file. After that, repeated runs do not need provider details:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_MODEL.
+# Edit .env and set OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
+# LOCALEFORGE_CONCURRENCY, and LOCALEFORGE_MAX_ATTEMPTS.
 ```
 
 If `.env` contains `OPENAI_BASE_URL` and `OPENAI_API_KEY`, LocaleForge automatically uses an API provider named `env`. `OPENAI_MODEL` becomes the default model for tasks that do not specify one.
@@ -67,9 +68,9 @@ localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out
 localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out --json --progress jsonl
 ```
 
-Use `--concurrency 4` to run up to four model requests at a time. File loading and writing remain sequential; only model calls are concurrent.
+`LOCALEFORGE_CONCURRENCY` controls how many model requests can run at once. File loading and writing remain sequential; only model calls are concurrent.
 
-LocaleForge retries each unique input up to 2 attempts by default. The retry wraps both provider errors and response validation errors, so invalid `status-json` output gets one corrective retry. Use `--max-attempts 1` to disable retries for a run, or a higher value when a task needs more resilience.
+`LOCALEFORGE_MAX_ATTEMPTS` controls retries per unique input, including the first try. The retry wraps both provider errors and response validation errors, so invalid `status-json` output gets a corrective retry.
 
 ## Validate Before Running
 
@@ -102,14 +103,14 @@ Return only the polished text. Do not explain.
 
 `model` is optional. Omit it to use `OPENAI_MODEL` from `.env`; set it when a task needs a specific model.
 
-For task-specific concurrency or retry limits, use the nested model form:
+For an explicit task model, use either shorthand or the nested model form:
 
 ```yaml
 model:
   name: gpt-5.5
-  concurrency: 4
-  max_attempts: 2
 ```
+
+Do not put concurrency or retry policy in task files. Those are global runtime settings in `.env`.
 
 Default table contract:
 

@@ -23,6 +23,8 @@ class CliTests(unittest.TestCase):
             "OPENAI_BASE_URL",
             "OPENAI_API_KEY",
             "OPENAI_MODEL",
+            "LOCALEFORGE_CONCURRENCY",
+            "LOCALEFORGE_MAX_ATTEMPTS",
             "LF_KEY",
             "LF_BASE_URL",
         ]
@@ -198,6 +200,75 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["files"][0]["model_calls"], 2)
+
+    def test_run_uses_env_max_attempts_default(self) -> None:
+        class TwiceInvalidJsonClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def ensure_available(self) -> list[str]:
+                return ["flaky"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls += 1
+                if self.calls < 3:
+                    return "not json"
+                return '{"status":"OK"}'
+
+        Path(".env").write_text("LOCALEFORGE_MAX_ATTEMPTS=3\n", encoding="utf-8")
+        task = Path("task.md")
+        task.write_text("---\nid: qa\nmode: status-json\n---\n\nReturn JSON.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+        client = TwiceInvalidJsonClient()
+
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=client):
+            with redirect_stdout(stdout):
+                code = main(["run", "--task", str(task), "--input", str(source), "--json"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["files"][0]["model_calls"], 3)
+
+    def test_run_uses_env_concurrency_default(self) -> None:
+        class SlowClient:
+            def __init__(self) -> None:
+                self.active = 0
+                self.max_active = 0
+                self.lock = None
+
+            def ensure_available(self) -> list[str]:
+                return ["slow"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                import threading
+                import time
+
+                if self.lock is None:
+                    self.lock = threading.Lock()
+                with self.lock:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                time.sleep(0.05)
+                with self.lock:
+                    self.active -= 1
+                return user_text.upper()
+
+        Path(".env").write_text("LOCALEFORGE_CONCURRENCY=3\n", encoding="utf-8")
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\nmode: transform\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\na\nb\nc\nd\n", encoding="utf-8")
+        stdout = StringIO()
+        client = SlowClient()
+
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=client):
+            with redirect_stdout(stdout):
+                code = main(["run", "--task", str(task), "--input", str(source), "--json"])
+
+        self.assertEqual(code, 0)
+        self.assertGreater(client.max_active, 1)
 
 
 if __name__ == "__main__":

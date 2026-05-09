@@ -32,6 +32,8 @@ ENV_PROVIDER_ID = "env"
 ENV_BASE_URL = "OPENAI_BASE_URL"
 ENV_API_KEY = "OPENAI_API_KEY"
 ENV_MODEL = "OPENAI_MODEL"
+ENV_CONCURRENCY = "LOCALEFORGE_CONCURRENCY"
+ENV_MAX_ATTEMPTS = "LOCALEFORGE_MAX_ATTEMPTS"
 
 
 @dataclass(frozen=True)
@@ -201,8 +203,8 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 
 def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> RunOptions:
-    concurrency = _resolve_concurrency(args, profile, settings)
-    max_attempts = _resolve_max_attempts(args, profile)
+    concurrency = _resolve_concurrency(args, settings)
+    max_attempts = _resolve_max_attempts(args, settings)
     if settings is not None:
         effective = _resolve_effective_model_config(profile, settings, args, require_model=False)  # type: ignore[arg-type]
         execution_mode = effective.execution_mode
@@ -227,24 +229,42 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
     )
 
 
-def _resolve_concurrency(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> int:
+def _resolve_concurrency(args: argparse.Namespace, settings: object | None) -> int:
     explicit = getattr(args, "concurrency", None)
     if explicit is not None:
         return explicit
-    if profile.model.concurrency is not None:
-        return profile.model.concurrency
+    env_value = _positive_int_env(ENV_CONCURRENCY)
+    if env_value is not None:
+        return env_value
     if settings is not None:
         return settings.defaults.concurrency  # type: ignore[attr-defined]
     return 1
 
 
-def _resolve_max_attempts(args: argparse.Namespace, profile: TaskProfile) -> int:
+def _resolve_max_attempts(args: argparse.Namespace, settings: object | None) -> int:
     explicit = getattr(args, "max_attempts", None)
     if explicit is not None:
         return explicit
-    if profile.model.max_attempts is not None:
-        return profile.model.max_attempts
+    env_value = _positive_int_env(ENV_MAX_ATTEMPTS)
+    if env_value is not None:
+        return env_value
+    if settings is not None:
+        return settings.defaults.max_attempts  # type: ignore[attr-defined]
     return 2
+
+
+def _positive_int_env(name: str) -> int | None:
+    load_local_env()
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a positive integer.") from exc
+    if parsed < 1:
+        raise ConfigError(f"{name} must be a positive integer.")
+    return parsed
 
 
 def _progress_reporter(args: argparse.Namespace) -> ProgressReporter:

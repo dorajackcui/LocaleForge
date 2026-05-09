@@ -32,6 +32,7 @@ class SettingsDefaults:
     provider_id: str | None = None
     model: str = DEFAULT_LOCAL_MODEL
     concurrency: int = 1
+    max_attempts: int = 2
 
 
 @dataclass
@@ -69,6 +70,7 @@ def load_settings(path: Path | str | None = None) -> AppSettings:
         provider_id=_optional_str(defaults_raw.get("provider_id")),
         model=str(defaults_raw.get("model", DEFAULT_LOCAL_MODEL)).strip() or DEFAULT_LOCAL_MODEL,
         concurrency=_positive_int(defaults_raw.get("concurrency"), 1),
+        max_attempts=_positive_int(defaults_raw.get("max_attempts"), 2),
     )
     providers = [_provider_from_dict(item) for item in providers_raw if isinstance(item, dict)]
     return AppSettings(defaults=defaults, providers=providers)

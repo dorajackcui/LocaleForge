@@ -18,11 +18,9 @@ output:
 # Optional. Omit this field to use OPENAI_MODEL from .env.
 # model: gpt-5.5
 
-# Optional advanced form when this task needs its own concurrency or retry policy.
+# Optional advanced form when this task needs an explicit provider or model name.
 # model:
 #   name: gpt-5.5
-#   concurrency: 4
-#   max_attempts: 2
 ---
 
 Rewrite the user text into clear, natural, concise French.
