@@ -38,6 +38,9 @@ class TaskProfileTests(unittest.TestCase):
             "  start_row: 3\n"
             "output:\n"
             "  column: F\n"
+            "  columns:\n"
+            "    status: G\n"
+            "    reason: H\n"
             "model:\n"
             "  execution_mode: api\n"
             "  provider: default-api\n"
@@ -49,6 +52,8 @@ class TaskProfileTests(unittest.TestCase):
 
         self.assertEqual(profile.input.column, "C")
         self.assertEqual(profile.input.start_row, 3)
+        self.assertEqual(profile.output.columns["status"], "G")
+        self.assertEqual(profile.output.columns["reason"], "H")
         self.assertEqual(profile.model.provider, "default-api")
         self.assertEqual(profile.model.concurrency, 4)
 

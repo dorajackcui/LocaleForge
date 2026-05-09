@@ -20,11 +20,29 @@ class ProvidersAndModesTests(unittest.TestCase):
         with self.assertRaises(ModelProviderError):
             process_model_response("transform", "   ")
 
-    def test_status_json_parses_status_and_spans(self) -> None:
-        result = process_model_response("status-json", '{"status":"OK","spans":["Mana"]}')
+    def test_status_json_parses_object_fields(self) -> None:
+        result = process_model_response(
+            "status-json",
+            '{"status":"NEEDS_REVIEW","category":"tone","reason":"Too literal","suggestion":"Rewrite naturally"}',
+        )
 
-        self.assertEqual(result.primary, "OK")
-        self.assertEqual(result.details, "Mana")
+        self.assertEqual(result.primary, "NEEDS_REVIEW")
+        self.assertEqual(result.fields["status"], "NEEDS_REVIEW")
+        self.assertEqual(result.fields["category"], "tone")
+        self.assertEqual(result.fields["reason"], "Too literal")
+        self.assertEqual(result.fields["suggestion"], "Rewrite naturally")
+
+    def test_status_json_stringifies_list_fields(self) -> None:
+        result = process_model_response("status-json", '{"status":"OK","spans":["Mana","UI"]}')
+
+        self.assertEqual(result.fields["spans"], "Mana | UI")
+
+    def test_status_json_does_not_require_status_field(self) -> None:
+        result = process_model_response("status-json", '{"category":"tone","reason":""}')
+
+        self.assertEqual(result.primary, "tone")
+        self.assertEqual(result.fields["category"], "tone")
+        self.assertEqual(result.fields["reason"], "")
 
 
 if __name__ == "__main__":

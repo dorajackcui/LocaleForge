@@ -26,6 +26,7 @@ class OutputConfig:
     create: bool = True
     overwrite: bool = True
     details_column: str | None = None
+    columns: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,7 @@ def _output_config(value: object) -> OutputConfig:
         create=bool(data.get("create", True)),
         overwrite=bool(data.get("overwrite", True)),
         details_column=_optional_str(data.get("details_column")),
+        columns=_string_mapping(data.get("columns"), "output.columns"),
     )
 
 
@@ -157,3 +159,17 @@ def _model_config(value: object) -> ModelConfig:
         name=_optional_str(data.get("name")),
         concurrency=_positive_int(concurrency, 1, "model.concurrency") if concurrency is not None else None,
     )
+
+
+def _string_mapping(value: object, field_name: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise TaskProfileError(f"`{field_name}` must be a mapping.")
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        field = str(key).strip()
+        column = str(item).strip()
+        if field and column:
+            result[field] = column
+    return result

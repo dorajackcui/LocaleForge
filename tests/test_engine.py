@@ -83,6 +83,62 @@ class EngineTests(unittest.TestCase):
             self.assertIn("A", output_text)
             self.assertIn("D", output_text)
 
+    def test_status_json_writes_each_json_field_to_a_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "status.md"
+            task_path.write_text(
+                "---\n"
+                "id: qa\n"
+                "mode: status-json\n"
+                "---\n\n"
+                "Return JSON.\n",
+                encoding="utf-8",
+            )
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nhello\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = StaticModelClient(
+                {
+                    "hello": (
+                        '{"status":"NEEDS_REVIEW","category":"tone",'
+                        '"reason":"Too literal","suggestion":"Rewrite naturally"}'
+                    )
+                }
+            )
+
+            report = run_task(profile, task_path, RunOptions(input_path=input_path), client)
+
+            self.assertEqual(report.status, "success")
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("status,category,reason,suggestion", output_text)
+            self.assertIn("NEEDS_REVIEW,tone,Too literal,Rewrite naturally", output_text)
+
+    def test_status_json_output_columns_can_rename_json_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "status.md"
+            task_path.write_text(
+                "---\n"
+                "id: qa\n"
+                "mode: status-json\n"
+                "output:\n"
+                "  columns:\n"
+                "    status: review_status\n"
+                "    reason: review_reason\n"
+                "---\n\n"
+                "Return JSON.\n",
+                encoding="utf-8",
+            )
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nhello\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = StaticModelClient({"hello": '{"status":"NEEDS_REVIEW","reason":"Too literal"}'})
+
+            report = run_task(profile, task_path, RunOptions(input_path=input_path), client)
+
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("review_status,review_reason", output_text)
+            self.assertIn("NEEDS_REVIEW,Too literal", output_text)
+
 
 if __name__ == "__main__":
     unittest.main()

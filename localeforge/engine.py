@@ -37,7 +37,7 @@ def validate_task(profile: TaskProfile, task_path: Path, options: RunOptions) ->
         try:
             table = _load_for_profile(item.input, profile, options)
             source_col = table.resolve_column(options.input_col or profile.input.column, create=False)
-            table.resolve_column(options.output_col or profile.output.column, create=profile.output.create)
+            _validate_output_columns(table, profile, options)
             rows_total = max(table.max_row - profile.input.start_row + 1, 0)
             report.files.append(
                 FileReport(
@@ -98,10 +98,9 @@ def _run_file(
 ) -> FileReport:
     table = _load_for_profile(item.input, profile, options)
     source_col = table.resolve_column(options.input_col or profile.input.column, create=False)
-    target_col = table.resolve_column(options.output_col or profile.output.column, create=profile.output.create)
-    details_col: int | None = None
-    if profile.mode == "status-json" and profile.output.details_column:
-        details_col = table.resolve_column(profile.output.details_column, create=True)
+    target_col: int | None = None
+    if profile.mode == "transform":
+        target_col = table.resolve_column(options.output_col or profile.output.column, create=profile.output.create)
 
     rows_total = max(table.max_row - profile.input.start_row + 1, 0)
     file_report = FileReport(status="success", input=item.input, output=item.output, rows_total=rows_total)
@@ -142,10 +141,12 @@ def _run_file(
 
     for row_idx in sorted(results_by_row):
         processed = results_by_row[row_idx]
-        if profile.output.overwrite or not table.get_cell(row_idx, target_col):
-            table.set_cell(row_idx, target_col, processed.primary)
-        if details_col is not None and processed.details:
-            table.set_cell(row_idx, details_col, processed.details)
+        if profile.mode == "status-json":
+            _write_json_fields(table, row_idx, processed, profile)
+        else:
+            assert target_col is not None
+            if profile.output.overwrite or not table.get_cell(row_idx, target_col):
+                table.set_cell(row_idx, target_col, processed.primary)
 
     table.save(item.output)
     if progress:
@@ -204,6 +205,32 @@ def _emit_progress(
 
 def _load_for_profile(path: Path, profile: TaskProfile, options: RunOptions) -> Table:
     return load_table(path, sheet_name=options.sheet or profile.input.sheet, header_row=profile.input.header_row)
+
+
+def _validate_output_columns(table: Table, profile: TaskProfile, options: RunOptions) -> None:
+    if profile.mode != "status-json":
+        table.resolve_column(options.output_col or profile.output.column, create=profile.output.create)
+        return
+    for column_name in profile.output.columns.values():
+        table.resolve_column(column_name, create=profile.output.create)
+    if profile.output.details_column:
+        table.resolve_column(profile.output.details_column, create=profile.output.create)
+
+
+def _write_json_fields(table: Table, row_idx: int, processed: ProcessedResult, profile: TaskProfile) -> None:
+    for field_name, value in processed.fields.items():
+        column_name = _json_output_column(profile, field_name)
+        column = table.resolve_column(column_name, create=profile.output.create)
+        if profile.output.overwrite or not table.get_cell(row_idx, column):
+            table.set_cell(row_idx, column, value)
+
+
+def _json_output_column(profile: TaskProfile, field_name: str) -> str:
+    if field_name in profile.output.columns:
+        return profile.output.columns[field_name]
+    if field_name == "spans" and profile.output.details_column:
+        return profile.output.details_column
+    return field_name
 
 
 def _new_report(profile: TaskProfile, task_path: Path, options: RunOptions) -> RunReport:

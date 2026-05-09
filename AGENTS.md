@@ -106,7 +106,27 @@ Polish the user text.
 Return only the polished text. Do not explain.
 ```
 
-Use `transform` for text-in/text-out tasks. Use `status-json` only when the task needs structured status and spans.
+Use `transform` for text-in/text-out tasks. Use `status-json` when one input cell should produce multiple structured output columns.
+
+For `status-json`, require the model to return one JSON object. Each JSON field becomes an output column:
+
+```json
+{
+  "status": "NEEDS_REVIEW",
+  "category": "tone",
+  "reason": "Too literal",
+  "suggestion": "Rewrite naturally"
+}
+```
+
+Use `output.columns` only when field names and column names should differ:
+
+```yaml
+output:
+  columns:
+    status: review_status
+    reason: review_reason
+```
 
 Do not put API keys in task files.
 

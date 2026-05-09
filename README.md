@@ -118,13 +118,27 @@ localeforge run --task tasks/proofread.md --input data/a.xlsx --input-col C --ou
 
 `transform` is the default mode. The model returns final text, and LocaleForge writes it to `target`.
 
-`status-json` is for QA, extraction, and classification tasks. The model returns:
+`status-json` is for QA, extraction, and classification tasks. The model must return a JSON object:
 
 ```json
-{"status":"OK","spans":[]}
+{
+  "status": "NEEDS_REVIEW",
+  "category": "tone",
+  "reason": "Too literal",
+  "suggestion": "Rewrite naturally"
+}
 ```
 
-The `status` value is written to `target`. If `output.details_column` is configured, `spans` are joined with ` | ` and written there.
+Each JSON field is written to an output column with the same name. The example above creates or updates `status`, `category`, `reason`, and `suggestion`.
+
+Use `output.columns` only when a JSON field should be written to a different column name:
+
+```yaml
+output:
+  columns:
+    status: review_status
+    reason: review_reason
+```
 
 ## Reports And JSON
 

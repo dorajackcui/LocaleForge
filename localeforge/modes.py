@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from .errors import ModelProviderError
 
@@ -10,6 +11,7 @@ from .errors import ModelProviderError
 class ProcessedResult:
     primary: str
     details: str = ""
+    fields: dict[str, str] = field(default_factory=dict)
 
 
 def process_model_response(mode: str, raw: str) -> ProcessedResult:
@@ -36,18 +38,30 @@ def _process_status_json(raw: str) -> ProcessedResult:
     if not isinstance(payload, dict):
         raise ModelProviderError("Model JSON response must be an object.")
 
-    status = str(payload.get("status", "")).strip()
-    if not status:
-        raise ModelProviderError("Model JSON response requires a non-empty `status`.")
+    fields = {
+        str(key).strip(): _stringify_json_value(value)
+        for key, value in payload.items()
+        if str(key).strip()
+    }
+    if not fields:
+        raise ModelProviderError("Model JSON response must include at least one field.")
 
-    spans_value = payload.get("spans", [])
-    if spans_value is None:
-        spans: list[str] = []
-    elif isinstance(spans_value, list):
-        spans = [str(item).strip() for item in spans_value if str(item).strip()]
-    else:
-        raise ModelProviderError("Model JSON response field `spans` must be a list.")
-    return ProcessedResult(primary=status, details=" | ".join(spans))
+    primary = fields.get("status", "") or next((value for value in fields.values() if value), "")
+    return ProcessedResult(primary=primary, details=fields.get("spans", ""), fields=fields)
+
+
+def _stringify_json_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        if all(not isinstance(item, (dict, list)) for item in value):
+            return " | ".join(str(item).strip() for item in value if str(item).strip())
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value).strip()
 
 
 def _excerpt(value: str, limit: int = 160) -> str:
