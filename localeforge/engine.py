@@ -30,7 +30,7 @@ class RunOptions:
 
 
 def validate_task(profile: TaskProfile, task_path: Path, options: RunOptions) -> RunReport:
-    items = discover_work_items(options.input_path, options.output_dir, options.output_path)
+    items = discover_work_items(options.input_path, options.output_dir, options.output_path, output_suffix=profile.id)
     report = _new_report(profile, task_path, options)
     errors: list[str] = []
 
@@ -66,7 +66,7 @@ def run_task(
     client: ModelClient,
     progress: ProgressReporter | None = None,
 ) -> RunReport:
-    items = discover_work_items(options.input_path, options.output_dir, options.output_path)
+    items = discover_work_items(options.input_path, options.output_dir, options.output_path, output_suffix=profile.id)
     report = _new_report(profile, task_path, options)
     cache: dict[str, ProcessedResult] = {}
     errors: list[str] = []

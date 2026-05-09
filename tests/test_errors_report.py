@@ -24,7 +24,7 @@ class ErrorsAndReportTests(unittest.TestCase):
                 FileReport(
                     status="success",
                     input=Path("data/a.csv"),
-                    output=Path("out/a.localeforge.csv"),
+                    output=Path("out/a_proofread.csv"),
                     rows_total=2,
                     rows_processed=1,
                     rows_empty=1,

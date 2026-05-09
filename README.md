@@ -51,6 +51,15 @@ localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out
 
 Directory input recursively scans `.csv` and `.xlsx` files and mirrors the structure under `--output-dir`.
 
+Default output names include the task id so repeated task runs are easy to distinguish:
+
+```text
+data/source.csv + tasks/proofread.md -> data/source_proofread.csv
+mt.localeforge.xlsx + tasks/review.md -> mt.localeforge_review.xlsx
+```
+
+Use `--output` for a single file when you need an exact path.
+
 Progress is written to stderr so stdout stays clean for reports and JSON. Human runs show text progress by default; JSON runs keep progress off unless explicitly requested:
 
 ```powershell

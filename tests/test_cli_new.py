@@ -82,10 +82,13 @@ class CliTests(unittest.TestCase):
             source = Path(tmpdir) / "a.csv"
             source.write_text("source\nhello\n", encoding="utf-8")
 
-            with redirect_stdout(StringIO()):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
                 code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
 
             self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["files"][0]["output"].endswith("a_proofread.csv"))
 
     def test_doctor_defaults_to_human_readable_output(self) -> None:
         output = StringIO()
@@ -163,6 +166,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "success")
+        self.assertTrue(payload["files"][0]["output"].endswith("source_proofread.csv"))
         self.assertIn("[1/1]", stderr.getvalue())
         self.assertIn("done", stderr.getvalue())
 

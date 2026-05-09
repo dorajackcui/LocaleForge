@@ -13,7 +13,7 @@ Default table contract:
 - header row is row `1`
 - first data row is row `2`
 
-The source file is not modified. LocaleForge writes new `.localeforge.csv` or `.localeforge.xlsx` files.
+The source file is not modified. By default, LocaleForge writes `filename_task-id.ext`, for example `source_proofread.csv` or `mt.localeforge_review.xlsx`.
 
 ## First Check
 

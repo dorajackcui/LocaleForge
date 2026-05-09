@@ -21,7 +21,17 @@ class InputsAndTabularTests(unittest.TestCase):
             items = discover_work_items(source)
 
             self.assertEqual(len(items), 1)
-            self.assertEqual(items[0].output.name, "a.localeforge.csv")
+            self.assertEqual(items[0].output.name, "a_localeforge.csv")
+
+    def test_single_file_default_output_can_use_task_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "mt.localeforge.xlsx"
+            source.write_text("source\nhello\n", encoding="utf-8")
+
+            items = discover_work_items(source, output_suffix="review")
+
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].output.name, "mt.localeforge_review.xlsx")
 
     def test_folder_requires_output_dir_and_mirrors_supported_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -36,7 +46,10 @@ class InputsAndTabularTests(unittest.TestCase):
 
             items = discover_work_items(root, Path(tmpdir) / "out")
             self.assertEqual(len(items), 1)
-            self.assertEqual(items[0].output, (Path(tmpdir) / "out" / "fr" / "a.localeforge.csv").resolve())
+            self.assertEqual(items[0].output, (Path(tmpdir) / "out" / "fr" / "a_localeforge.csv").resolve())
+
+            task_items = discover_work_items(root, Path(tmpdir) / "out", output_suffix="review")
+            self.assertEqual(task_items[0].output, (Path(tmpdir) / "out" / "fr" / "a_review.csv").resolve())
 
     def test_csv_header_matching_and_target_creation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

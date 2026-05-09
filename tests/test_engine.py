@@ -30,7 +30,7 @@ class EngineTests(unittest.TestCase):
 
             self.assertEqual(report.status, "success")
             self.assertEqual(report.files[0].rows_total, 1)
-            self.assertFalse((Path(tmpdir) / "a.localeforge.csv").exists())
+            self.assertFalse((Path(tmpdir) / "a_proofread.csv").exists())
 
     def test_run_transforms_csv_and_uses_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -47,7 +47,7 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(report.files[0].rows_empty, 1)
             self.assertEqual(report.files[0].model_calls, 1)
             self.assertEqual(report.files[0].cache_hits, 1)
-            self.assertIn("a.localeforge.csv", str(report.files[0].output))
+            self.assertIn("a_proofread.csv", str(report.files[0].output))
             self.assertIn("bonjour", report.files[0].output.read_text(encoding="utf-8"))
 
     def test_run_uses_bounded_concurrency_for_model_calls(self) -> None:
