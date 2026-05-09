@@ -76,9 +76,9 @@ class ProgressReporter:
 
         label = f"[{file_index}/{file_count}] {input_path.name}"
         if event == "file_start":
-            message = f"{label} start rows={rows_total}"
+            message = f"{label} start rows 0/{rows_total}"
         elif event == "file_done":
-            message = f"{label} done rows={rows_total} calls={model_calls} cache={cache_hits}"
+            message = f"{label} done rows {rows_total}/{rows_total} calls={model_calls} cache={cache_hits}"
         else:
             message = f"{label} rows {rows_done}/{rows_total} calls={model_calls} cache={cache_hits}"
         print(message, file=self.stream, flush=True)
