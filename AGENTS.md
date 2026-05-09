@@ -89,14 +89,16 @@ When creating a new task, copy [tasks/example-task.md](tasks/example-task.md) an
 - `id`: stable task identifier, lowercase with hyphens
 - `description`: short human summary
 - `input.column` and `output.column`: omit or keep `source` and `target` for the default schema
+- `model`: optional model name shorthand, for example `model: gpt-5.5`
 - prompt body: the full system prompt sent to the model
 
-Most tasks should omit the `model` block and use `OPENAI_MODEL` from `.env`.
+Most tasks should omit `model` and use `OPENAI_MODEL` from `.env`. Set `model` only when a task needs a specific model.
 
 ```markdown
 ---
 id: proofread
 mode: transform
+model: gpt-5.5
 ---
 
 Polish the user text.

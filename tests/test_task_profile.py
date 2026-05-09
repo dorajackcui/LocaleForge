@@ -52,6 +52,15 @@ class TaskProfileTests(unittest.TestCase):
         self.assertEqual(profile.model.provider, "default-api")
         self.assertEqual(profile.model.concurrency, 4)
 
+    def test_scalar_model_is_model_name_shorthand(self) -> None:
+        path = self.write_task("---\nid: rewrite\nmode: transform\nmodel: gpt-5.5\n---\n\nRewrite.\n")
+
+        profile = load_task_profile(path)
+
+        self.assertEqual(profile.model.name, "gpt-5.5")
+        self.assertIsNone(profile.model.provider)
+        self.assertIsNone(profile.model.execution_mode)
+
     def test_example_task_is_valid(self) -> None:
         root = Path(__file__).resolve().parents[1]
         profile = load_task_profile(root / "tasks" / "example-task.md")

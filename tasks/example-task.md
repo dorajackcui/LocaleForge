@@ -15,11 +15,8 @@ output:
   create: true
   overwrite: true
 
-# Optional. Omit this block to use OPENAI_MODEL from .env.
-# model:
-#   execution_mode: api
-#   provider: env
-#   name: gpt-4.1-mini
+# Optional. Omit this field to use OPENAI_MODEL from .env.
+# model: gpt-5.5
 ---
 
 Rewrite the user text into clear, natural, concise French.

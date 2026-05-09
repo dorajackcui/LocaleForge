@@ -145,6 +145,10 @@ def _output_config(value: object) -> OutputConfig:
 
 
 def _model_config(value: object) -> ModelConfig:
+    if value is None:
+        return ModelConfig()
+    if isinstance(value, str):
+        return ModelConfig(name=_optional_str(value))
     data = _mapping(value, "model")
     concurrency = data.get("concurrency")
     return ModelConfig(

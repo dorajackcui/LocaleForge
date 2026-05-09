@@ -73,11 +73,14 @@ Minimal transform task:
 ---
 id: proofread
 mode: transform
+model: gpt-5.5
 ---
 
 Polish the user text.
 Return only the polished text. Do not explain.
 ```
+
+`model` is optional. Omit it to use `OPENAI_MODEL` from `.env`; set it when a task needs a specific model.
 
 Default table contract:
 
