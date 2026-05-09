@@ -28,6 +28,7 @@ class RunOptions:
     model: str = ""
     concurrency: int = 1
     max_attempts: int = 2
+    tips: str | None = None
 
 
 def validate_task(profile: TaskProfile, task_path: Path, options: RunOptions) -> RunReport:
@@ -191,7 +192,7 @@ def _generate_processed(
     last_error: ModelProviderError | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            raw = client.generate(_prompt_for_attempt(profile, attempt, last_error), source_text)
+            raw = client.generate(_prompt_for_attempt(profile, options, attempt, last_error), source_text)
             return process_model_response(profile.mode, raw), attempt
         except ModelProviderError as exc:
             last_error = exc
@@ -201,9 +202,15 @@ def _generate_processed(
     raise ModelProviderError("Model failed before producing a response.")
 
 
-def _prompt_for_attempt(profile: TaskProfile, attempt: int, last_error: ModelProviderError | None) -> str:
+def _prompt_for_attempt(
+    profile: TaskProfile,
+    options: RunOptions,
+    attempt: int,
+    last_error: ModelProviderError | None,
+) -> str:
+    prompt = _prompt_with_tips(profile.prompt, options.tips)
     if attempt <= 1 or last_error is None:
-        return profile.prompt
+        return prompt
 
     if profile.mode == "status-json":
         retry_instruction = (
@@ -217,7 +224,14 @@ def _prompt_for_attempt(profile: TaskProfile, attempt: int, last_error: ModelPro
             f"{last_error}\n"
             "Return a valid, non-empty response that satisfies the task."
         )
-    return f"{profile.prompt}\n\n{retry_instruction}"
+    return f"{prompt}\n\n{retry_instruction}"
+
+
+def _prompt_with_tips(prompt: str, tips: str | None) -> str:
+    clean_tips = str(tips or "").strip()
+    if not clean_tips:
+        return prompt
+    return f"{prompt}\n\nSession tips:\n{clean_tips}"
 
 
 def _emit_progress(

@@ -71,6 +71,12 @@ Single file:
 localeforge run --task tasks/proofread.md --input data/source.csv --json
 ```
 
+Run with temporary session guidance:
+
+```powershell
+localeforge run --task tasks/proofread.md --input data/source.csv --tips "This batch should keep product names unchanged." --json
+```
+
 Folder batch:
 
 ```powershell
@@ -131,6 +137,8 @@ output:
 ```
 
 Do not put API keys in task files.
+
+Do not edit a task file for one-off batch instructions. Use `--tips "..."` to append temporary run-specific guidance to the system prompt.
 
 ## Progress, Concurrency, And Retry
 

@@ -51,6 +51,37 @@ class EngineTests(unittest.TestCase):
             self.assertIn("a_proofread.csv", str(report.files[0].output))
             self.assertIn("bonjour", report.files[0].output.read_text(encoding="utf-8"))
 
+    def test_run_adds_tips_to_system_prompt(self) -> None:
+        class PromptCaptureClient:
+            def __init__(self) -> None:
+                self.prompts: list[str] = []
+
+            def ensure_available(self) -> list[str]:
+                return ["capture"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.prompts.append(system_prompt)
+                return "bonjour"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nhello\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = PromptCaptureClient()
+
+            run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, tips="Use informal tone for this batch."),
+                client,
+            )
+
+            self.assertEqual(len(client.prompts), 1)
+            self.assertIn("Polish.", client.prompts[0])
+            self.assertIn("Session tips:", client.prompts[0])
+            self.assertIn("Use informal tone for this batch.", client.prompts[0])
+
     def test_run_uses_bounded_concurrency_for_model_calls(self) -> None:
         class SlowClient:
             def __init__(self) -> None:
@@ -195,12 +226,14 @@ class EngineTests(unittest.TestCase):
             profile = load_task_profile(task_path)
             client = FlakyJsonClient()
 
-            report = run_task(profile, task_path, RunOptions(input_path=input_path), client)
+            report = run_task(profile, task_path, RunOptions(input_path=input_path, tips="Keep JSON compact."), client)
 
             self.assertEqual(report.status, "success")
             self.assertEqual(client.calls, 2)
             self.assertEqual(report.files[0].model_calls, 2)
             self.assertIn("Previous attempt failed", client.prompts[1])
+            self.assertIn("Return JSON.", client.prompts[1])
+            self.assertIn("Keep JSON compact.", client.prompts[1])
             self.assertIn("OK", report.files[0].output.read_text(encoding="utf-8"))
 
     def test_status_json_raises_after_retry_limit(self) -> None:

@@ -57,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_task_run_args(run)
     run.add_argument("--dry-run", action="store_true", help="Validate without calling a model or writing outputs.")
     run.add_argument("--progress", choices=["auto", "none", "text", "jsonl"], default="auto", help="Emit run progress to stderr.")
+    run.add_argument("--tips", help="Temporary session note appended to the task system prompt for this run.")
 
     validate = subparsers.add_parser("validate", help="Validate a task/input run without model calls or writes.")
     _add_task_run_args(validate)
@@ -226,6 +227,7 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
         model=model or "",
         concurrency=concurrency,
         max_attempts=max_attempts,
+        tips=getattr(args, "tips", None),
     )
 
 

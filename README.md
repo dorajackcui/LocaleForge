@@ -44,6 +44,12 @@ localeforge run --task tasks/proofread.md --input data/source.csv
 localeforge run --task tasks/proofread.md --input data/source.xlsx
 ```
 
+Add one-off session guidance without editing the task file:
+
+```powershell
+localeforge run --task tasks/proofread.md --input data/source.xlsx --tips "This batch uses a casual UI tone."
+```
+
 Folder batch:
 
 ```powershell
@@ -71,6 +77,8 @@ localeforge run --task tasks/proofread.md --input data/raw --output-dir data/out
 `LOCALEFORGE_CONCURRENCY` controls how many model requests can run at once. File loading and writing remain sequential; only model calls are concurrent.
 
 `LOCALEFORGE_MAX_ATTEMPTS` controls retries per unique input, including the first try. The retry wraps both provider errors and response validation errors, so invalid `status-json` output gets a corrective retry.
+
+Use `--tips` for temporary run-specific guidance. Tips are appended to the task system prompt for that run only and are not written back to the task file.
 
 ## Validate Before Running
 

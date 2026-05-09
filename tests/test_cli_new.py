@@ -172,6 +172,44 @@ class CliTests(unittest.TestCase):
         self.assertIn("[1/1]", stderr.getvalue())
         self.assertIn("done", stderr.getvalue())
 
+    def test_run_tips_cli_adds_to_prompt(self) -> None:
+        class PromptCaptureClient:
+            def __init__(self) -> None:
+                self.prompts: list[str] = []
+
+            def ensure_available(self) -> list[str]:
+                return ["capture"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.prompts.append(system_prompt)
+                return "bonjour"
+
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+        client = PromptCaptureClient()
+
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=client):
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "run",
+                        "--task",
+                        str(task),
+                        "--input",
+                        str(source),
+                        "--json",
+                        "--tips",
+                        "Keep product names unchanged.",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertIn("Session tips:", client.prompts[0])
+        self.assertIn("Keep product names unchanged.", client.prompts[0])
+
     def test_run_max_attempts_cli_retries_invalid_json(self) -> None:
         class FlakyJsonClient:
             def __init__(self) -> None:
