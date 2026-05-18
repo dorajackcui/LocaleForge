@@ -30,6 +30,8 @@ class RunOptions:
     concurrency: int = 1
     max_attempts: int = 2
     tips: str | None = None
+    request_mode: str = "concurrent"
+    window_size: int = 5
 
 
 def validate_task(profile: TaskProfile, task_path: Path, options: RunOptions) -> RunReport:

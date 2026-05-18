@@ -34,6 +34,9 @@ ENV_API_KEY = "OPENAI_API_KEY"
 ENV_MODEL = "OPENAI_MODEL"
 ENV_CONCURRENCY = "LOCALEFORGE_CONCURRENCY"
 ENV_MAX_ATTEMPTS = "LOCALEFORGE_MAX_ATTEMPTS"
+REQUEST_MODE_CONCURRENT = "concurrent"
+REQUEST_MODE_WINDOW = "window"
+WINDOW_SIZE_DEFAULT = 5
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,16 @@ def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = Tr
         parser.add_argument("--timeout", type=float, default=120.0)
         parser.add_argument("--concurrency", type=_positive_int_arg, help="Maximum concurrent model requests.")
         parser.add_argument("--max-attempts", type=_positive_int_arg, help="Maximum attempts per unique input, including the first try.")
+        parser.add_argument(
+            "--request-mode",
+            choices=[REQUEST_MODE_CONCURRENT, REQUEST_MODE_WINDOW],
+            help="Request scheduling mode. Defaults to concurrent.",
+        )
+        parser.add_argument(
+            "--window-size",
+            type=_positive_int_arg,
+            help="Number of current rows per window request. Requires --request-mode window.",
+        )
 
 
 def _handle_provider(args: argparse.Namespace) -> int:
@@ -208,6 +221,7 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 
 def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> RunOptions:
+    request_mode, window_size = _resolve_request_options(args)
     concurrency = _resolve_concurrency(args, settings)
     max_attempts = _resolve_max_attempts(args, settings)
     if settings is not None:
@@ -233,7 +247,22 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
         concurrency=concurrency,
         max_attempts=max_attempts,
         tips=getattr(args, "tips", None),
+        request_mode=request_mode,
+        window_size=window_size,
     )
+
+
+def _resolve_request_options(args: argparse.Namespace) -> tuple[str, int]:
+    request_mode = getattr(args, "request_mode", None) or REQUEST_MODE_CONCURRENT
+    explicit_window_size = getattr(args, "window_size", None)
+    explicit_concurrency = getattr(args, "concurrency", None)
+
+    if request_mode == REQUEST_MODE_CONCURRENT and explicit_window_size is not None:
+        raise ConfigError("--window-size requires --request-mode window.")
+    if request_mode == REQUEST_MODE_WINDOW and explicit_concurrency is not None:
+        raise ConfigError("--concurrency is only valid with --request-mode concurrent.")
+
+    return request_mode, explicit_window_size or WINDOW_SIZE_DEFAULT
 
 
 def _resolve_concurrency(args: argparse.Namespace, settings: object | None) -> int:

@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from localeforge.cli import main
 from localeforge.providers import StaticModelClient
+from localeforge.report import FileReport, ModelReport, RunReport, TaskReport
 
 
 class CliTests(unittest.TestCase):
@@ -100,6 +101,101 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertTrue(payload["files"][0]["output"].endswith("a_proofread.csv"))
+
+    def test_run_accepts_window_request_mode_options(self) -> None:
+        self._write_api_env()
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        captured = {}
+
+        def fake_run_task(profile, task_path, options, client, progress=None):
+            captured["request_mode"] = options.request_mode
+            captured["window_size"] = options.window_size
+            return RunReport(
+                status="success",
+                task=TaskReport(id=profile.id, mode=profile.mode, path=task_path),
+                model=ModelReport(execution_mode=options.execution_mode, provider=options.provider, name=options.model),
+                files=[FileReport(status="success", input=options.input_path, output=Path("source_proofread.csv"))],
+            )
+
+        stdout = StringIO()
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=StaticModelClient({})):
+            with patch("localeforge.cli.run_task", side_effect=fake_run_task):
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "run",
+                            "--task",
+                            str(task),
+                            "--input",
+                            str(source),
+                            "--request-mode",
+                            "window",
+                            "--window-size",
+                            "3",
+                            "--json",
+                        ]
+                    )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["request_mode"], "window")
+        self.assertEqual(captured["window_size"], 3)
+
+    def test_validate_rejects_window_size_with_concurrent_mode(self) -> None:
+        self._write_api_env()
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(
+                [
+                    "validate",
+                    "--task",
+                    str(task),
+                    "--input",
+                    str(source),
+                    "--window-size",
+                    "5",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("--window-size requires --request-mode window", payload["errors"][0])
+
+    def test_validate_rejects_explicit_concurrency_with_window_mode(self) -> None:
+        self._write_api_env()
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(
+                [
+                    "validate",
+                    "--task",
+                    str(task),
+                    "--input",
+                    str(source),
+                    "--request-mode",
+                    "window",
+                    "--concurrency",
+                    "2",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("--concurrency is only valid with --request-mode concurrent", payload["errors"][0])
 
     def test_run_rejects_report_path_that_matches_table_output(self) -> None:
         self._write_api_env()
