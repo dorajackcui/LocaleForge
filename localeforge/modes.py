@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from .errors import ModelProviderError
 
@@ -38,6 +38,10 @@ def _process_status_json(raw: str) -> ProcessedResult:
     if not isinstance(payload, dict):
         raise ModelProviderError("Model JSON response must be an object.")
 
+    return process_status_fields(payload)
+
+
+def process_status_fields(payload: Mapping[str, Any]) -> ProcessedResult:
     fields = {
         str(key).strip(): _stringify_json_value(value)
         for key, value in payload.items()
