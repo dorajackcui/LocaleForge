@@ -132,7 +132,7 @@ def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = Tr
         parser.add_argument(
             "--window-size",
             type=_positive_int_arg,
-            help="Number of current rows per window request. Requires --request-mode window.",
+            help="Number of source rows per window request. Requires --request-mode window.",
         )
 
 
@@ -188,8 +188,8 @@ def _handle_validate(args: argparse.Namespace) -> int:
     task_path = Path(args.task).expanduser().resolve()
     profile = load_task_profile(task_path)
     settings = load_settings()
-    _validate_provider_resolution(profile, settings, args)
     options = _run_options(args, profile, settings)
+    _validate_provider_resolution(profile, settings, args)
     _validate_report_path(args.report, profile, options)
     report = validate_task(profile, task_path, options)
     _write_report(report, args.report, allow_overwrite=options.allow_overwrite_output)
