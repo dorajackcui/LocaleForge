@@ -77,4 +77,4 @@ output:
     - suggestion
 ```
 
-The model must return exactly one JSON object. Missing or unknown fields are response validation errors and are retried.
+In concurrent mode, the model must return exactly one JSON object. In window mode, the model must return a JSON array with one object per current row. Missing or unknown fields are response validation errors and are retried.

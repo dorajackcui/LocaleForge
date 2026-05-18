@@ -195,6 +195,58 @@ class CliTests(unittest.TestCase):
         self.assertIn("--window-size requires --request-mode window", payload["errors"][0])
         self.assertNotIn("API execution requires", payload["errors"][0])
 
+    def test_validate_rejects_invalid_request_mode_as_json_error(self) -> None:
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(
+                [
+                    "validate",
+                    "--task",
+                    str(task),
+                    "--input",
+                    str(source),
+                    "--request-mode",
+                    "nope",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("Unsupported request mode", payload["errors"][0])
+        self.assertIn("nope", payload["errors"][0])
+
+    def test_validate_rejects_window_status_json_fields_before_provider_resolution(self) -> None:
+        task = Path("task.md")
+        task.write_text("---\nid: qa\nmode: status-json\n---\n\nReturn JSON.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(
+                [
+                    "validate",
+                    "--task",
+                    str(task),
+                    "--input",
+                    str(source),
+                    "--request-mode",
+                    "window",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("Window request mode requires status-json tasks to declare output.fields.", payload["errors"][0])
+        self.assertNotIn("API execution requires", payload["errors"][0])
+
     def test_validate_rejects_explicit_concurrency_with_window_mode(self) -> None:
         self._write_api_env()
         task = Path("task.md")

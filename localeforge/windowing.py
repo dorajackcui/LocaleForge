@@ -34,8 +34,9 @@ def window_prompt_instructions(profile: TaskProfile) -> str:
         fields = ", ".join(profile.output.fields)
         return (
             "LocaleForge window mode instructions:\n"
+            "These instructions override any task prompt output-format instructions written for one row, one cell, or one object.\n"
             "The user message is a JSON object with previous, current, and next arrays.\n"
-            "Return exactly one JSON array and no markdown or prose.\n"
+            "Return exactly one JSON array for the current rows and no markdown or prose.\n"
             "Return one object for each item in current, and do not return objects for previous or next.\n"
             "Each object must include row and exactly these fields: "
             f"{fields}.\n"
@@ -43,8 +44,9 @@ def window_prompt_instructions(profile: TaskProfile) -> str:
         )
     return (
         "LocaleForge window mode instructions:\n"
+        "These instructions override any task prompt output-format instructions written for one row, one cell, or one object.\n"
         "The user message is a JSON object with previous, current, and next arrays.\n"
-        "Return exactly one JSON array and no markdown or prose.\n"
+        "Return exactly one JSON array for the current rows and no markdown or prose.\n"
         "Return one object for each item in current, and do not return objects for previous or next.\n"
         "Each object must include row and target, and no other output fields.\n"
         "The row value must match a row from current."

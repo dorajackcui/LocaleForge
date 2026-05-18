@@ -38,6 +38,8 @@ class WindowingTests(unittest.TestCase):
 
             text = window_prompt_instructions(profile)
 
+            self.assertIn("override any task prompt output-format instructions", text)
+            self.assertIn("one row, one cell, or one object", text)
             self.assertIn("JSON array", text)
             self.assertIn("current", text)
             self.assertIn("row", text)
@@ -57,6 +59,8 @@ class WindowingTests(unittest.TestCase):
 
             text = window_prompt_instructions(profile)
 
+            self.assertIn("override any task prompt output-format instructions", text)
+            self.assertIn("one row, one cell, or one object", text)
             self.assertIn("JSON array", text)
             self.assertIn("current", text)
             self.assertIn("row", text)
