@@ -101,6 +101,36 @@ class TaskProfileTests(unittest.TestCase):
 
         self.assertEqual(profile.output.fields, ("status", "reason"))
 
+    def test_request_config_reads_window_metadata(self) -> None:
+        path = self.write_task(
+            "---\n"
+            "id: translate-window\n"
+            "request:\n"
+            "  mode: window\n"
+            "  window_size: 7\n"
+            "---\n\n"
+            "Translate.\n"
+        )
+
+        profile = load_task_profile(path)
+
+        self.assertEqual(profile.request.mode, "window")
+        self.assertEqual(profile.request.window_size, 7)
+
+    def test_request_window_size_requires_window_mode(self) -> None:
+        path = self.write_task(
+            "---\n"
+            "id: translate-window\n"
+            "request:\n"
+            "  mode: concurrent\n"
+            "  window_size: 7\n"
+            "---\n\n"
+            "Translate.\n"
+        )
+
+        with self.assertRaisesRegex(TaskProfileError, "request.window_size"):
+            load_task_profile(path)
+
     def test_output_column_mappings_must_match_declared_fields(self) -> None:
         path = self.write_task(
             "---\n"

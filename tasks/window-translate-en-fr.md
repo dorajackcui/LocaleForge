@@ -2,6 +2,10 @@
 id: window_en_fr
 mode: transform
 description: translate English UI and help text into French with nearby-row context.
+
+request:
+  mode: window
+  window_size: 5
 ---
 
 You translate English product UI and help text into natural French.

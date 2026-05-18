@@ -50,9 +50,17 @@ source,status,problem_review,better_french
 
 ## Request Modes
 
-By default, LocaleForge uses `--request-mode concurrent`: each unique non-empty source value is requested once, and `--concurrency` controls parallel model calls.
+By default, LocaleForge uses concurrent mode: each unique non-empty source value is requested once, and `--concurrency` controls parallel model calls.
 
-Use `--request-mode window --window-size 5` when adjacent rows need shared context. Window mode sends previous generated results, current rows, and next source rows together. It requires the model to return a JSON array with one object per current row.
+Use task metadata when adjacent rows need shared context:
+
+```yaml
+request:
+  mode: window
+  window_size: 5
+```
+
+Window mode sends previous generated results, current rows, and next source rows together. It requires the model to return a JSON array with one object per current row. CLI flags can temporarily override task metadata for one run, for example `--request-mode concurrent` or `--window-size 10`.
 
 For `status-json` tasks in window mode, declare stable `output.fields` so LocaleForge can validate each returned object.
 

@@ -130,12 +130,12 @@ def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = Tr
         parser.add_argument("--max-attempts", type=_positive_int_arg, help="Maximum attempts per unique input, including the first try.")
         parser.add_argument(
             "--request-mode",
-            help="Request scheduling mode. Defaults to concurrent.",
+            help="Override task request mode for this run. Defaults to task metadata, then concurrent.",
         )
         parser.add_argument(
             "--window-size",
             type=_positive_int_arg,
-            help="Number of source rows per window request. Requires --request-mode window.",
+            help="Override source rows per window request. Requires effective request mode window.",
         )
 
 
@@ -224,7 +224,7 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 
 def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: object | None) -> RunOptions:
-    request_mode, window_size = _resolve_request_options(args)
+    request_mode, window_size = _resolve_request_options(args, profile)
     _validate_request_contract_preflight(profile, request_mode)
     concurrency = _resolve_concurrency(args, settings)
     max_attempts = _resolve_max_attempts(args, settings)
@@ -256,8 +256,9 @@ def _run_options(args: argparse.Namespace, profile: TaskProfile, settings: objec
     )
 
 
-def _resolve_request_options(args: argparse.Namespace) -> tuple[str, int]:
-    request_mode = getattr(args, "request_mode", None) or REQUEST_MODE_CONCURRENT
+def _resolve_request_options(args: argparse.Namespace, profile: TaskProfile) -> tuple[str, int]:
+    explicit_request_mode = getattr(args, "request_mode", None)
+    request_mode = explicit_request_mode or profile.request.mode or REQUEST_MODE_CONCURRENT
     explicit_window_size = getattr(args, "window_size", None)
     explicit_concurrency = getattr(args, "concurrency", None)
 
@@ -269,8 +270,11 @@ def _resolve_request_options(args: argparse.Namespace) -> tuple[str, int]:
         raise ConfigError("--window-size requires --request-mode window.")
     if request_mode == REQUEST_MODE_WINDOW and explicit_concurrency is not None:
         raise ConfigError("--concurrency is only valid with --request-mode concurrent.")
+    if request_mode == REQUEST_MODE_CONCURRENT:
+        return request_mode, WINDOW_SIZE_DEFAULT
 
-    return request_mode, explicit_window_size or WINDOW_SIZE_DEFAULT
+    window_size = explicit_window_size or profile.request.window_size or WINDOW_SIZE_DEFAULT
+    return request_mode, window_size
 
 
 def _validate_request_contract_preflight(profile: TaskProfile, request_mode: str) -> None:

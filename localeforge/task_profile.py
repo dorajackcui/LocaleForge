@@ -10,6 +10,7 @@ from .errors import TaskProfileError
 
 
 SUPPORTED_MODES = {"transform", "status-json"}
+SUPPORTED_REQUEST_MODES = {"concurrent", "window"}
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,12 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class RequestConfig:
+    mode: str | None = None
+    window_size: int | None = None
+
+
+@dataclass(frozen=True)
 class TaskProfile:
     id: str
     mode: str = "transform"
@@ -45,6 +52,7 @@ class TaskProfile:
     input: InputConfig = field(default_factory=InputConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    request: RequestConfig = field(default_factory=RequestConfig)
     prompt: str = ""
 
 
@@ -74,6 +82,7 @@ def load_task_profile(path: Path | str) -> TaskProfile:
         input=_input_config(metadata.get("input")),
         output=_output_config(metadata.get("output")),
         model=_model_config(metadata.get("model")),
+        request=_request_config(metadata.get("request")),
         prompt=prompt.strip(),
     )
 
@@ -173,6 +182,21 @@ def _model_config(value: object) -> ModelConfig:
     )
 
 
+def _request_config(value: object) -> RequestConfig:
+    data = _mapping(value, "request")
+    mode = _optional_str(data.get("mode"))
+    if mode is not None and mode not in SUPPORTED_REQUEST_MODES:
+        known = ", ".join(sorted(SUPPORTED_REQUEST_MODES))
+        raise TaskProfileError(f"Unsupported request mode `{mode}`. Supported modes: {known}.")
+    window_size = _optional_positive_int(data.get("window_size"), "request.window_size")
+    if window_size is not None and mode != "window":
+        raise TaskProfileError("`request.window_size` requires `request.mode: window`.")
+    return RequestConfig(
+        mode=mode,
+        window_size=window_size,
+    )
+
+
 def _string_mapping(value: object, field_name: str) -> dict[str, str]:
     if value is None:
         return {}
@@ -198,6 +222,12 @@ def _string_sequence(value: object, field_name: str) -> tuple[str, ...]:
         if field and field not in result:
             result.append(field)
     return tuple(result)
+
+
+def _optional_positive_int(value: object, field_name: str) -> int | None:
+    if value is None:
+        return None
+    return _positive_int(value, 1, field_name)
 
 
 def _bool_config(value: object, fallback: bool, field_name: str) -> bool:

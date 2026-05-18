@@ -45,13 +45,21 @@ Default request mode processes one unique source value per model request and may
 localeforge run --task tasks/rewrite.md --input data/source.csv --json
 ```
 
-For adjacent rows that need shared context, use window request mode:
+For adjacent rows that need shared context, declare window mode in the task front matter:
 
-```powershell
-localeforge run --task tasks/review.md --input data/source.csv --request-mode window --window-size 5 --json
+```yaml
+request:
+  mode: window
+  window_size: 5
 ```
 
-Window mode sends previous generated results, current source rows, and next source rows in each request. It expects the model to return one JSON array item per current row.
+Then run it like any other task:
+
+```powershell
+localeforge run --task tasks/review.md --input data/source.csv --json
+```
+
+Window mode sends previous generated results, current source rows, and next source rows in each request. It expects the model to return one JSON array item per current row. CLI flags such as `--request-mode concurrent` or `--window-size 10` can temporarily override task metadata for one run.
 
 Use the templates when creating a new task:
 

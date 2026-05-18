@@ -40,6 +40,18 @@ class ModelReport:
         }
 
 
+@dataclass(frozen=True)
+class RequestReport:
+    mode: str = "concurrent"
+    window_size: int = 5
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "window_size": self.window_size,
+        }
+
+
 @dataclass
 class FileReport:
     status: str
@@ -73,12 +85,14 @@ class RunReport:
     model: ModelReport
     files: list[FileReport] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    request: RequestReport = field(default_factory=RequestReport)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "task": self.task.to_dict(),
             "model": self.model.to_dict(),
+            "request": self.request.to_dict(),
             "files": [item.to_dict() for item in self.files],
             "errors": list(self.errors),
         }

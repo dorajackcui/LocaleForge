@@ -25,6 +25,11 @@ output:
 
 # Optional. Omit this field to use OPENAI_MODEL from .env.
 # model: gpt-5.5
+
+# Optional. Omit request to use concurrent mode.
+# request:
+#   mode: window
+#   window_size: 5
 ---
 
 Classify the user text and return exactly one JSON object with status, category, reason, and suggestion; do not add markdown or prose.

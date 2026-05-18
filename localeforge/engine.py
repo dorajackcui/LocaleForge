@@ -10,7 +10,7 @@ from .inputs import WorkItem, discover_work_items
 from .modes import ProcessedResult, process_model_response
 from .progress import ProgressReporter
 from .providers import ModelClient
-from .report import FileReport, ModelReport, RunReport, TaskReport
+from .report import FileReport, ModelReport, RequestReport, RunReport, TaskReport
 from .tabular import Table, load_table
 from .task_profile import TaskProfile
 from .windowing import (
@@ -493,6 +493,7 @@ def _new_report(profile: TaskProfile, task_path: Path, options: RunOptions) -> R
         status="success",
         task=TaskReport(id=profile.id, mode=profile.mode, path=task_path),
         model=ModelReport(execution_mode=options.execution_mode, provider=options.provider, name=options.model),
+        request=RequestReport(mode=options.request_mode, window_size=options.window_size),
     )
 
 

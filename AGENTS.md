@@ -72,14 +72,22 @@ Add temporary run-only guidance:
 localeforge run --task tasks/rewrite.md --input data/source.csv --tips "Keep product names unchanged." --json
 ```
 
-Use window request mode for files where nearby rows depend on each other:
+Use window request mode for files where nearby rows depend on each other. Prefer declaring it in the task front matter:
 
-```powershell
-localeforge validate --task tasks/review.md --input data/source.csv --request-mode window --window-size 5 --json
-localeforge run --task tasks/review.md --input data/source.csv --request-mode window --window-size 5 --json
+```yaml
+request:
+  mode: window
+  window_size: 5
 ```
 
-Window mode processes rows sequentially in windows. It does not use `--concurrency`, de-duplication, or cache hits. For `status-json` tasks, `output.fields` must be declared.
+Then validate and run normally:
+
+```powershell
+localeforge validate --task tasks/review.md --input data/source.csv --json
+localeforge run --task tasks/review.md --input data/source.csv --json
+```
+
+Window mode processes rows sequentially in windows. It does not use `--concurrency`, de-duplication, or cache hits. For `status-json` tasks, `output.fields` must be declared. Use `--request-mode` or `--window-size` only for temporary run-level overrides.
 
 ## Output Contract
 
@@ -88,6 +96,10 @@ With `--json`, stdout is a run report. Parse stdout as JSON.
 ```json
 {
   "status": "success",
+  "request": {
+    "mode": "concurrent",
+    "window_size": 5
+  },
   "files": [
     {
       "input": "data/source.csv",
@@ -127,9 +139,10 @@ Use:
 ## Rules
 
 - Always run `validate` before `run`.
-- `--request-mode concurrent` is the default request mode.
-- Use `--request-mode window --window-size 5` when adjacent rows need shared context.
-- Do not combine `--concurrency` with `--request-mode window`.
+- Omit `request` metadata to use `concurrent` mode.
+- Use task metadata `request.mode: window` and `request.window_size: 5` when adjacent rows need shared context.
+- CLI `--request-mode` and `--window-size` override task metadata for one run.
+- Do not combine `--concurrency` with effective `window` mode.
 - Do not combine `--window-size` with the default `concurrent` request mode.
 - Use `--tips` for one-off instructions; do not edit a task file for one batch.
 - For folder runs, `--output-dir` must be outside the input directory.

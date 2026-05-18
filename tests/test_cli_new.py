@@ -143,6 +143,116 @@ class CliTests(unittest.TestCase):
         self.assertEqual(captured["request_mode"], "window")
         self.assertEqual(captured["window_size"], 3)
 
+    def test_run_uses_task_request_metadata_by_default(self) -> None:
+        self._write_api_env()
+        task = Path("task.md")
+        task.write_text(
+            "---\n"
+            "id: proofread\n"
+            "request:\n"
+            "  mode: window\n"
+            "  window_size: 4\n"
+            "---\n\n"
+            "Polish.\n",
+            encoding="utf-8",
+        )
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        captured = {}
+
+        def fake_run_task(profile, task_path, options, client, progress=None):
+            captured["request_mode"] = options.request_mode
+            captured["window_size"] = options.window_size
+            return RunReport(
+                status="success",
+                task=TaskReport(id=profile.id, mode=profile.mode, path=task_path),
+                model=ModelReport(execution_mode=options.execution_mode, provider=options.provider, name=options.model),
+                files=[FileReport(status="success", input=options.input_path, output=Path("source_proofread.csv"))],
+            )
+
+        stdout = StringIO()
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=StaticModelClient({})):
+            with patch("localeforge.cli.run_task", side_effect=fake_run_task):
+                with redirect_stdout(stdout):
+                    code = main(["run", "--task", str(task), "--input", str(source), "--json"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["request_mode"], "window")
+        self.assertEqual(captured["window_size"], 4)
+
+    def test_run_cli_request_mode_overrides_task_request_metadata(self) -> None:
+        self._write_api_env()
+        task = Path("task.md")
+        task.write_text(
+            "---\n"
+            "id: proofread\n"
+            "request:\n"
+            "  mode: window\n"
+            "  window_size: 4\n"
+            "---\n\n"
+            "Polish.\n",
+            encoding="utf-8",
+        )
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        captured = {}
+
+        def fake_run_task(profile, task_path, options, client, progress=None):
+            captured["request_mode"] = options.request_mode
+            captured["window_size"] = options.window_size
+            return RunReport(
+                status="success",
+                task=TaskReport(id=profile.id, mode=profile.mode, path=task_path),
+                model=ModelReport(execution_mode=options.execution_mode, provider=options.provider, name=options.model),
+                files=[FileReport(status="success", input=options.input_path, output=Path("source_proofread.csv"))],
+            )
+
+        stdout = StringIO()
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=StaticModelClient({})):
+            with patch("localeforge.cli.run_task", side_effect=fake_run_task):
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "run",
+                            "--task",
+                            str(task),
+                            "--input",
+                            str(source),
+                            "--request-mode",
+                            "concurrent",
+                            "--json",
+                        ]
+                    )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["request_mode"], "concurrent")
+        self.assertEqual(captured["window_size"], 5)
+
+    def test_validate_json_includes_effective_request_config(self) -> None:
+        self._write_api_env()
+        task = Path("task.md")
+        task.write_text(
+            "---\n"
+            "id: proofread\n"
+            "request:\n"
+            "  mode: window\n"
+            "  window_size: 4\n"
+            "---\n\n"
+            "Polish.\n",
+            encoding="utf-8",
+        )
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["request"]["mode"], "window")
+        self.assertEqual(payload["request"]["window_size"], 4)
+
     def test_validate_rejects_window_size_with_concurrent_mode(self) -> None:
         self._write_api_env()
         task = Path("task.md")
