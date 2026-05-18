@@ -9,7 +9,7 @@ from io import StringIO
 from pathlib import Path
 
 from localeforge.engine import RunOptions, run_task, validate_task
-from localeforge.errors import ModelProviderError
+from localeforge.errors import ConfigError, ModelProviderError
 from localeforge.progress import ProgressReporter
 from localeforge.providers import StaticModelClient
 from localeforge.task_profile import load_task_profile
@@ -416,6 +416,143 @@ class EngineTests(unittest.TestCase):
             self.assertIn("status,reason", output_text)
             self.assertIn("OK,HELLO", output_text)
             self.assertIn("OK,WORLD", output_text)
+
+    def test_window_mode_overwrites_existing_target_when_output_overwrite_false(self) -> None:
+        class WindowOverwriteClient:
+            def ensure_available(self) -> list[str]:
+                return ["window-overwrite"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                payload = json.loads(user_text)
+                return json.dumps(
+                    [
+                        {"row": item["row"], "target": item["source"].upper()}
+                        for item in payload["current"]
+                    ],
+                    ensure_ascii=False,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "proofread.md"
+            task_path.write_text(
+                "---\n"
+                "id: proofread\n"
+                "mode: transform\n"
+                "output:\n"
+                "  overwrite: false\n"
+                "---\n\n"
+                "Polish.\n",
+                encoding="utf-8",
+            )
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source,target\na,OLD\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, request_mode="window", window_size=1),
+                WindowOverwriteClient(),
+            )
+
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("a,A", output_text)
+            self.assertNotIn("a,OLD", output_text)
+
+    def test_window_mode_status_json_overwrites_existing_fields_when_output_overwrite_false(self) -> None:
+        class StatusOverwriteClient:
+            def ensure_available(self) -> list[str]:
+                return ["window-status-overwrite"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                payload = json.loads(user_text)
+                return json.dumps(
+                    [
+                        {"row": item["row"], "status": "OK", "reason": item["source"].upper()}
+                        for item in payload["current"]
+                    ],
+                    ensure_ascii=False,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "status.md"
+            task_path.write_text(
+                "---\n"
+                "id: qa\n"
+                "mode: status-json\n"
+                "output:\n"
+                "  overwrite: false\n"
+                "  fields:\n"
+                "    - status\n"
+                "    - reason\n"
+                "---\n\n"
+                "Return JSON.\n",
+                encoding="utf-8",
+            )
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source,status,reason\nhello,OLD_STATUS,OLD_REASON\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, request_mode="window", window_size=1),
+                StatusOverwriteClient(),
+            )
+
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("hello,OK,HELLO", output_text)
+            self.assertNotIn("OLD_STATUS", output_text)
+            self.assertNotIn("OLD_REASON", output_text)
+
+    def test_window_mode_duplicate_sources_do_not_dedupe_or_cache(self) -> None:
+        class DuplicateWindowClient:
+            def ensure_available(self) -> list[str]:
+                return ["window-duplicates"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                payload = json.loads(user_text)
+                return json.dumps(
+                    [
+                        {"row": item["row"], "target": item["source"].upper()}
+                        for item in payload["current"]
+                    ],
+                    ensure_ascii=False,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nsame\nsame\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, request_mode="window", window_size=2),
+                DuplicateWindowClient(),
+            )
+
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertEqual(report.files[0].rows_processed, 2)
+            self.assertEqual(report.files[0].model_calls, 1)
+            self.assertEqual(report.files[0].cache_hits, 0)
+            self.assertEqual(output_text.count("SAME"), 2)
+
+    def test_window_mode_status_json_requires_declared_fields_at_engine_level(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "status.md"
+            task_path.write_text("---\nid: qa\nmode: status-json\n---\n\nReturn JSON.\n", encoding="utf-8")
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nhello\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+
+            with self.assertRaisesRegex(ConfigError, "requires status-json tasks to declare output.fields"):
+                validate_task(
+                    profile,
+                    task_path,
+                    RunOptions(input_path=input_path, request_mode="window", window_size=2),
+                )
 
     def test_window_mode_includes_previous_targets_and_next_sources(self) -> None:
         class ContextCaptureClient:

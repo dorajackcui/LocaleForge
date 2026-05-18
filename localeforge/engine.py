@@ -264,11 +264,10 @@ def _run_file_window(
     for row_idx in sorted(results_by_row):
         processed = results_by_row[row_idx]
         if profile.mode == "status-json":
-            _write_json_fields(table, row_idx, processed, profile)
+            _write_json_fields(table, row_idx, processed, profile, force_overwrite=True)
         else:
             assert target_col is not None
-            if profile.output.overwrite or not table.get_cell(row_idx, target_col):
-                table.set_cell(row_idx, target_col, processed.primary)
+            table.set_cell(row_idx, target_col, processed.primary)
 
     table.save(item.output)
     if progress:
@@ -448,13 +447,19 @@ def _validate_output_columns(table: Table, profile: TaskProfile, options: RunOpt
         table.resolve_column(profile.output.details_column, create=profile.output.create)
 
 
-def _write_json_fields(table: Table, row_idx: int, processed: ProcessedResult, profile: TaskProfile) -> None:
+def _write_json_fields(
+    table: Table,
+    row_idx: int,
+    processed: ProcessedResult,
+    profile: TaskProfile,
+    force_overwrite: bool = False,
+) -> None:
     field_names = profile.output.fields or tuple(processed.fields.keys())
     for field_name in field_names:
         value = processed.fields.get(field_name, "")
         column_name = _json_output_column(profile, field_name)
         column = table.resolve_column(column_name, create=profile.output.create)
-        if profile.output.overwrite or not table.get_cell(row_idx, column):
+        if force_overwrite or profile.output.overwrite or not table.get_cell(row_idx, column):
             table.set_cell(row_idx, column, value)
 
 
