@@ -97,6 +97,17 @@ class WindowingTests(unittest.TestCase):
                     [WindowSourceRow(row=2, source="a")],
                 )
 
+    def test_rejects_whitespace_padded_transform_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(tmpdir)
+
+            with self.assertRaisesRegex(ModelProviderError, "unknown fields"):
+                process_window_response(
+                    profile,
+                    '[{"row":2,"target":"A"," target ":"B"}]',
+                    [WindowSourceRow(row=2, source="a")],
+                )
+
     def test_rejects_status_json_missing_declared_field(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             profile = self._profile(
@@ -113,6 +124,25 @@ class WindowingTests(unittest.TestCase):
                 process_window_response(
                     profile,
                     '[{"row":2,"status":"OK"}]',
+                    [WindowSourceRow(row=2, source="a")],
+                )
+
+    def test_rejects_whitespace_padded_status_json_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(
+                tmpdir,
+                "id: qa\n"
+                "mode: status-json\n"
+                "output:\n"
+                "  fields:\n"
+                "    - status\n"
+                "    - reason\n",
+            )
+
+            with self.assertRaisesRegex(ModelProviderError, "missing fields"):
+                process_window_response(
+                    profile,
+                    '[{"row":2," status ":"OK","reason":"Fine"}]',
                     [WindowSourceRow(row=2, source="a")],
                 )
 

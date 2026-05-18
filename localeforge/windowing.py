@@ -102,10 +102,14 @@ def _process_window_item(profile: TaskProfile, item: Mapping[str, Any]) -> Proce
 
 
 def _process_transform_item(item: Mapping[str, Any]) -> ProcessedResult:
-    keys = {str(key).strip() for key in item}
-    unknown = sorted(keys - {"row", "target"})
+    expected = {"row", "target"}
+    keys = set(item)
+    missing = sorted(expected - keys)
+    unknown = sorted(keys - expected)
     if unknown:
         raise ModelProviderError("Model window transform item included unknown fields: " + ", ".join(unknown))
+    if missing:
+        raise ModelProviderError("Model window transform item missing fields: " + ", ".join(missing))
     target = str(item.get("target", "")).strip()
     if not target:
         raise ModelProviderError("Model window transform item must include a non-empty target.")
@@ -114,7 +118,7 @@ def _process_transform_item(item: Mapping[str, Any]) -> ProcessedResult:
 
 def _process_status_json_item(profile: TaskProfile, item: Mapping[str, Any]) -> ProcessedResult:
     expected = set(profile.output.fields)
-    actual = {str(key).strip() for key in item if str(key).strip() and str(key).strip() != "row"}
+    actual = {key for key in item if key != "row"}
     missing = sorted(expected - actual)
     unknown = sorted(actual - expected)
     if missing or unknown:
