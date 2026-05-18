@@ -4,7 +4,7 @@ Use LocaleForge when you need to run one Markdown-defined LLM task over `.csv` o
 
 ## What It Does
 
-LocaleForge reads text from a table column, calls the configured model once per unique non-empty cell, and writes a new output table. The source file is never modified.
+By default, LocaleForge reads text from a table column, calls the configured model once per unique non-empty cell, and writes a new output table. The source file is never modified.
 
 Default table contract:
 
@@ -72,6 +72,15 @@ Add temporary run-only guidance:
 localeforge run --task tasks/rewrite.md --input data/source.csv --tips "Keep product names unchanged." --json
 ```
 
+Use window request mode for files where nearby rows depend on each other:
+
+```powershell
+localeforge validate --task tasks/review.md --input data/source.csv --request-mode window --window-size 5 --json
+localeforge run --task tasks/review.md --input data/source.csv --request-mode window --window-size 5 --json
+```
+
+Window mode processes rows sequentially in windows. It does not use `--concurrency`, de-duplication, or cache hits. For `status-json` tasks, `output.fields` must be declared.
+
 ## Output Contract
 
 With `--json`, stdout is a run report. Parse stdout as JSON.
@@ -118,6 +127,10 @@ Use:
 ## Rules
 
 - Always run `validate` before `run`.
+- `--request-mode concurrent` is the default request mode.
+- Use `--request-mode window --window-size 5` when adjacent rows need shared context.
+- Do not combine `--concurrency` with `--request-mode window`.
+- Do not combine `--window-size` with the default `concurrent` request mode.
 - Use `--tips` for one-off instructions; do not edit a task file for one batch.
 - For folder runs, `--output-dir` must be outside the input directory.
 - Output and report files must not already exist unless `--force` is used.

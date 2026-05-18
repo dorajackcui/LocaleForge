@@ -122,7 +122,11 @@ def _add_task_run_args(parser: argparse.ArgumentParser, include_model: bool = Tr
         parser.add_argument("--model")
         parser.add_argument("--base-url", help="Override provider base URL.")
         parser.add_argument("--timeout", type=float, default=120.0)
-        parser.add_argument("--concurrency", type=_positive_int_arg, help="Maximum concurrent model requests.")
+        parser.add_argument(
+            "--concurrency",
+            type=_positive_int_arg,
+            help="Maximum concurrent model requests. Only valid with --request-mode concurrent.",
+        )
         parser.add_argument("--max-attempts", type=_positive_int_arg, help="Maximum attempts per unique input, including the first try.")
         parser.add_argument(
             "--request-mode",

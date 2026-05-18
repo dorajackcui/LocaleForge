@@ -507,10 +507,14 @@ class EngineTests(unittest.TestCase):
 
     def test_window_mode_duplicate_sources_do_not_dedupe_or_cache(self) -> None:
         class DuplicateWindowClient:
+            def __init__(self) -> None:
+                self.user_texts: list[str] = []
+
             def ensure_available(self) -> list[str]:
                 return ["window-duplicates"]
 
             def generate(self, system_prompt: str, user_text: str) -> str:
+                self.user_texts.append(user_text)
                 payload = json.loads(user_text)
                 return json.dumps(
                     [
@@ -525,21 +529,23 @@ class EngineTests(unittest.TestCase):
             input_path = Path(tmpdir) / "a.csv"
             input_path.write_text("source\nsame\nsame\n", encoding="utf-8")
             profile = load_task_profile(task_path)
+            client = DuplicateWindowClient()
 
             report = run_task(
                 profile,
                 task_path,
-                RunOptions(input_path=input_path, request_mode="window", window_size=2),
-                DuplicateWindowClient(),
+                RunOptions(input_path=input_path, request_mode="window", window_size=1),
+                client,
             )
 
             output_text = report.files[0].output.read_text(encoding="utf-8")
             self.assertEqual(report.files[0].rows_processed, 2)
-            self.assertEqual(report.files[0].model_calls, 1)
+            self.assertEqual(len(client.user_texts), 2)
+            self.assertEqual(report.files[0].model_calls, 2)
             self.assertEqual(report.files[0].cache_hits, 0)
             self.assertEqual(output_text.count("SAME"), 2)
 
-    def test_window_mode_status_json_requires_declared_fields_at_engine_level(self) -> None:
+    def test_window_mode_status_json_requires_declared_output_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             task_path = Path(tmpdir) / "status.md"
             task_path.write_text("---\nid: qa\nmode: status-json\n---\n\nReturn JSON.\n", encoding="utf-8")
@@ -548,10 +554,11 @@ class EngineTests(unittest.TestCase):
             profile = load_task_profile(task_path)
 
             with self.assertRaisesRegex(ConfigError, "requires status-json tasks to declare output.fields"):
-                validate_task(
+                run_task(
                     profile,
                     task_path,
-                    RunOptions(input_path=input_path, request_mode="window", window_size=2),
+                    RunOptions(input_path=input_path, request_mode="window"),
+                    StaticModelClient({}),
                 )
 
     def test_window_mode_includes_previous_targets_and_next_sources(self) -> None:

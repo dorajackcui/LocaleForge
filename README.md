@@ -2,7 +2,7 @@
 
 LocaleForge is an agent-first CLI for running Markdown-defined LLM tasks over CSV and Excel tables.
 
-It reads text from a table column, calls the configured model once per unique non-empty value, and writes a new output table. The source file is never modified.
+By default, it reads text from a table column, calls the configured model once per unique non-empty value, and writes a new output table. The source file is never modified.
 
 ## Start Here
 
@@ -39,9 +39,19 @@ Use the existing runnable tasks for common flows:
 - `tasks/rewrite.md` rewrites one source cell into one target cell.
 - `tasks/review.md` reviews one source cell into structured output columns.
 
+Default request mode processes one unique source value per model request and may run requests concurrently:
+
 ```powershell
 localeforge run --task tasks/rewrite.md --input data/source.csv --json
 ```
+
+For adjacent rows that need shared context, use window request mode:
+
+```powershell
+localeforge run --task tasks/review.md --input data/source.csv --request-mode window --window-size 5 --json
+```
+
+Window mode sends previous generated results, current source rows, and next source rows in each request. It expects the model to return one JSON array item per current row.
 
 Use the templates when creating a new task:
 

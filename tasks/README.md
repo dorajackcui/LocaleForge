@@ -48,6 +48,14 @@ source,status,problem_review,better_french
 
 `status` is `OK` or `Problem`. `better_french` contains the final text to use.
 
+## Request Modes
+
+By default, LocaleForge uses `--request-mode concurrent`: each unique non-empty source value is requested once, and `--concurrency` controls parallel model calls.
+
+Use `--request-mode window --window-size 5` when adjacent rows need shared context. Window mode sends previous generated results, current rows, and next source rows together. It requires the model to return a JSON array with one object per current row.
+
+For `status-json` tasks in window mode, declare stable `output.fields` so LocaleForge can validate each returned object.
+
 ## Templates
 
 ### `tasks/example-transform.md`
