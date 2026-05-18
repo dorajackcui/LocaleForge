@@ -30,6 +30,7 @@ def build_window_user_text(
 
 def window_prompt_instructions(profile: TaskProfile) -> str:
     if profile.mode == "status-json":
+        _require_status_json_fields(profile)
         fields = ", ".join(profile.output.fields)
         return (
             "LocaleForge window mode instructions:\n"
@@ -129,6 +130,7 @@ def _process_transform_item(item: Mapping[str, Any]) -> ProcessedResult:
 
 
 def _process_status_json_item(profile: TaskProfile, item: Mapping[str, Any]) -> ProcessedResult:
+    _require_status_json_fields(profile)
     expected = set(profile.output.fields)
     actual = {key for key in item if key != "row"}
     missing = sorted(expected - actual)
@@ -143,6 +145,11 @@ def _process_status_json_item(profile: TaskProfile, item: Mapping[str, Any]) -> 
             "Model window status-json item did not match declared output.fields: " + "; ".join(details)
         )
     return process_status_fields({field: item.get(field, "") for field in profile.output.fields})
+
+
+def _require_status_json_fields(profile: TaskProfile) -> None:
+    if not profile.output.fields:
+        raise ModelProviderError("Window request mode requires status-json tasks to declare output.fields.")
 
 
 def _excerpt(value: str, limit: int = 160) -> str:

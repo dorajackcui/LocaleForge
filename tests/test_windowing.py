@@ -63,6 +63,16 @@ class WindowingTests(unittest.TestCase):
             self.assertIn("status", text)
             self.assertIn("reason", text)
 
+    def test_status_json_window_prompt_requires_declared_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(tmpdir, "id: qa\nmode: status-json\n")
+
+            with self.assertRaisesRegex(
+                ModelProviderError,
+                "Window request mode requires status-json tasks to declare output.fields.",
+            ):
+                window_prompt_instructions(profile)
+
     def test_process_transform_window_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             profile = self._profile(tmpdir)
@@ -95,6 +105,20 @@ class WindowingTests(unittest.TestCase):
             )
 
             self.assertEqual(processed[2].fields, {"status": "OK", "reason": "Fine"})
+
+    def test_status_json_window_response_requires_declared_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(tmpdir, "id: qa\nmode: status-json\n")
+
+            with self.assertRaisesRegex(
+                ModelProviderError,
+                "Window request mode requires status-json tasks to declare output.fields.",
+            ):
+                process_window_response(
+                    profile,
+                    '[{"row":2,"status":"OK"}]',
+                    [WindowSourceRow(row=2, source="a")],
+                )
 
     def test_rejects_duplicate_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
