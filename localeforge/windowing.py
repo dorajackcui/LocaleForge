@@ -88,11 +88,9 @@ def process_window_response(
 
 
 def _parse_row(value: object) -> int:
-    try:
-        row = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ModelProviderError("Each model window response item must include an integer row.") from exc
-    return row
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ModelProviderError("Each model window response item must include an integer row.")
+    return value
 
 
 def _process_window_item(profile: TaskProfile, item: Mapping[str, Any]) -> ProcessedResult:

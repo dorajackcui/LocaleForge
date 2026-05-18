@@ -71,6 +71,21 @@ class WindowingTests(unittest.TestCase):
                     [WindowSourceRow(row=2, source="a"), WindowSourceRow(row=3, source="b")],
                 )
 
+    def test_rejects_non_integer_rows(self) -> None:
+        cases = [
+            ("string", '[{"row":"2","target":"A"}]', [WindowSourceRow(row=2, source="a")]),
+            ("float", '[{"row":2.9,"target":"A"}]', [WindowSourceRow(row=2, source="a")]),
+            ("bool", '[{"row":true,"target":"A"}]', [WindowSourceRow(row=1, source="a")]),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(tmpdir)
+
+            for label, raw, current in cases:
+                with self.subTest(label=label):
+                    with self.assertRaisesRegex(ModelProviderError, "integer row"):
+                        process_window_response(profile, raw, current)
+
     def test_rejects_unknown_transform_field(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             profile = self._profile(tmpdir)
