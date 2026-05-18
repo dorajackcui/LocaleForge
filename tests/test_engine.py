@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
 import time
@@ -327,6 +328,173 @@ class EngineTests(unittest.TestCase):
             output_text = report.files[0].output.read_text(encoding="utf-8")
             self.assertIn("status,reason", output_text)
             self.assertNotIn("extra", output_text)
+
+    def test_window_mode_transforms_rows_in_ordered_batches(self) -> None:
+        class WindowClient:
+            def __init__(self) -> None:
+                self.user_texts: list[str] = []
+
+            def ensure_available(self) -> list[str]:
+                return ["window"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.user_texts.append(user_text)
+                payload = json.loads(user_text)
+                return json.dumps(
+                    [
+                        {"row": item["row"], "target": item["source"].upper()}
+                        for item in payload["current"]
+                    ],
+                    ensure_ascii=False,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\nb\nc\n\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = WindowClient()
+
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, request_mode="window", window_size=2),
+                client,
+            )
+
+            self.assertEqual(report.status, "success")
+            self.assertEqual(report.files[0].rows_processed, 3)
+            self.assertEqual(report.files[0].rows_empty, 1)
+            self.assertEqual(report.files[0].model_calls, 2)
+            self.assertEqual(report.files[0].cache_hits, 0)
+            self.assertEqual(len(client.user_texts), 2)
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("A", output_text)
+            self.assertIn("C", output_text)
+
+    def test_window_mode_status_json_writes_declared_fields(self) -> None:
+        class StatusWindowClient:
+            def ensure_available(self) -> list[str]:
+                return ["window-status"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                payload = json.loads(user_text)
+                return json.dumps(
+                    [
+                        {"row": item["row"], "status": "OK", "reason": item["source"].upper()}
+                        for item in payload["current"]
+                    ],
+                    ensure_ascii=False,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "status.md"
+            task_path.write_text(
+                "---\n"
+                "id: qa\n"
+                "mode: status-json\n"
+                "output:\n"
+                "  fields:\n"
+                "    - status\n"
+                "    - reason\n"
+                "---\n\n"
+                "Return JSON.\n",
+                encoding="utf-8",
+            )
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\nhello\nworld\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, request_mode="window", window_size=5),
+                StatusWindowClient(),
+            )
+
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("status,reason", output_text)
+            self.assertIn("OK,HELLO", output_text)
+            self.assertIn("OK,WORLD", output_text)
+
+    def test_window_mode_includes_previous_targets_and_next_sources(self) -> None:
+        class ContextCaptureClient:
+            def __init__(self) -> None:
+                self.payloads: list[dict[str, object]] = []
+
+            def ensure_available(self) -> list[str]:
+                return ["capture"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                payload = json.loads(user_text)
+                self.payloads.append(payload)
+                return json.dumps(
+                    [
+                        {"row": item["row"], "target": item["source"].upper()}
+                        for item in payload["current"]
+                    ],
+                    ensure_ascii=False,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\nb\nc\nd\ne\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = ContextCaptureClient()
+
+            run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, request_mode="window", window_size=2),
+                client,
+            )
+
+            self.assertEqual(client.payloads[0]["previous"], [])
+            self.assertEqual([item["source"] for item in client.payloads[0]["next"]], ["c", "d"])
+            self.assertEqual(client.payloads[1]["previous"][0]["source"], "a")
+            self.assertEqual(client.payloads[1]["previous"][0]["target"], "A")
+            self.assertEqual(client.payloads[1]["previous"][1]["target"], "B")
+            self.assertEqual([item["source"] for item in client.payloads[1]["next"]], ["e"])
+
+    def test_window_mode_retries_invalid_window_response(self) -> None:
+        class FlakyWindowClient:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.prompts: list[str] = []
+
+            def ensure_available(self) -> list[str]:
+                return ["flaky-window"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls += 1
+                self.prompts.append(system_prompt)
+                if self.calls == 1:
+                    return '[{"row":999,"target":"bad"}]'
+                payload = json.loads(user_text)
+                return json.dumps(
+                    [{"row": item["row"], "target": item["source"].upper()} for item in payload["current"]],
+                    ensure_ascii=False,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\nb\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = FlakyWindowClient()
+
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, request_mode="window", window_size=2, max_attempts=2),
+                client,
+            )
+
+            self.assertEqual(client.calls, 2)
+            self.assertEqual(report.files[0].model_calls, 2)
+            self.assertIn("Previous attempt failed", client.prompts[1])
+            self.assertIn("A", report.files[0].output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
