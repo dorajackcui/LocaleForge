@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localeforge"
+version = "0.1.0"
+description = "Agent-first CLI for LLM batch processing over Excel and CSV files."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "openpyxl",
+  "requests",
+  "PyYAML",
+]
+
+[project.scripts]
+localeforge = "localeforge.cli:main"

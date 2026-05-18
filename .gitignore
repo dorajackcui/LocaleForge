@@ -13,10 +13,13 @@ ENV/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
 
 # Environment files
 .env
 .env.*
+*.env
+!.env.example
 
 # IDE and OS files
 .vscode/
@@ -30,5 +33,16 @@ test*.xlsx
 # Excel temp/output files
 ~$*.xlsx
 *_checked.xlsx
+*.localeforge.xlsx
+*.localeforge.csv
 
-.env
+# LocaleForge local state and generated reports
+.localeforge/
+localeforge-settings*.json
+settings.local.json
+reports/
+data/out/
+
+.codex/
+docs/superpower/
+docs/superpowers/
