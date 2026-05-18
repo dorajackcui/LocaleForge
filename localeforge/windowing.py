@@ -57,7 +57,7 @@ def process_window_response(
 ) -> dict[int, ProcessedResult]:
     text = str(raw).strip()
     try:
-        payload = json.loads(text)
+        payload = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
     except json.JSONDecodeError as exc:
         raise ModelProviderError(f"Model returned invalid window JSON: {_excerpt(text)}") from exc
     if not isinstance(payload, list):
@@ -87,6 +87,15 @@ def process_window_response(
     return results
 
 
+def _reject_duplicate_keys(pairs: Sequence[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ModelProviderError(f"Model window response included duplicate key `{key}`.")
+        result[key] = value
+    return result
+
+
 def _parse_row(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ModelProviderError("Each model window response item must include an integer row.")
@@ -110,9 +119,12 @@ def _process_transform_item(item: Mapping[str, Any]) -> ProcessedResult:
         raise ModelProviderError("Model window transform item included unknown fields: " + ", ".join(unknown))
     if missing:
         raise ModelProviderError("Model window transform item missing fields: " + ", ".join(missing))
-    target = str(item.get("target", "")).strip()
+    value = item.get("target")
+    if not isinstance(value, str):
+        raise ModelProviderError("Model window transform item must include a non-empty string target.")
+    target = value.strip()
     if not target:
-        raise ModelProviderError("Model window transform item must include a non-empty target.")
+        raise ModelProviderError("Model window transform item must include a non-empty string target.")
     return ProcessedResult(primary=target)
 
 

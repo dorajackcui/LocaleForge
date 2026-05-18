@@ -6,7 +6,12 @@ from pathlib import Path
 
 from localeforge.errors import ModelProviderError
 from localeforge.task_profile import load_task_profile
-from localeforge.windowing import WindowSourceRow, build_window_user_text, process_window_response
+from localeforge.windowing import (
+    WindowSourceRow,
+    build_window_user_text,
+    process_window_response,
+    window_prompt_instructions,
+)
 
 
 class WindowingTests(unittest.TestCase):
@@ -26,6 +31,37 @@ class WindowingTests(unittest.TestCase):
         self.assertIn('"target": "A"', text)
         self.assertIn('"current"', text)
         self.assertIn('"next"', text)
+
+    def test_transform_window_prompt_instructions_mentions_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(tmpdir)
+
+            text = window_prompt_instructions(profile)
+
+            self.assertIn("JSON array", text)
+            self.assertIn("current", text)
+            self.assertIn("row", text)
+            self.assertIn("target", text)
+
+    def test_status_json_window_prompt_instructions_mentions_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(
+                tmpdir,
+                "id: qa\n"
+                "mode: status-json\n"
+                "output:\n"
+                "  fields:\n"
+                "    - status\n"
+                "    - reason\n",
+            )
+
+            text = window_prompt_instructions(profile)
+
+            self.assertIn("JSON array", text)
+            self.assertIn("current", text)
+            self.assertIn("row", text)
+            self.assertIn("status", text)
+            self.assertIn("reason", text)
 
     def test_process_transform_window_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -86,6 +122,46 @@ class WindowingTests(unittest.TestCase):
                     with self.assertRaisesRegex(ModelProviderError, "integer row"):
                         process_window_response(profile, raw, current)
 
+    def test_rejects_non_string_or_empty_transform_target(self) -> None:
+        cases = [
+            ("null", '[{"row":2,"target":null}]'),
+            ("number", '[{"row":2,"target":123}]'),
+            ("bool", '[{"row":2,"target":true}]'),
+            ("object", '[{"row":2,"target":{"text":"A"}}]'),
+            ("list", '[{"row":2,"target":["A"]}]'),
+            ("empty", '[{"row":2,"target":"   "}]'),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(tmpdir)
+
+            for label, raw in cases:
+                with self.subTest(label=label):
+                    with self.assertRaisesRegex(ModelProviderError, "non-empty string target"):
+                        process_window_response(profile, raw, [WindowSourceRow(row=2, source="a")])
+
+    def test_rejects_duplicate_transform_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(tmpdir)
+
+            with self.assertRaisesRegex(ModelProviderError, "duplicate key.*target"):
+                process_window_response(
+                    profile,
+                    '[{"row":2,"target":"A","target":"B"}]',
+                    [WindowSourceRow(row=2, source="a")],
+                )
+
+    def test_rejects_duplicate_row_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(tmpdir)
+
+            with self.assertRaisesRegex(ModelProviderError, "duplicate key.*row"):
+                process_window_response(
+                    profile,
+                    '[{"row":2,"row":3,"target":"A"}]',
+                    [WindowSourceRow(row=3, source="a")],
+                )
+
     def test_rejects_unknown_transform_field(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             profile = self._profile(tmpdir)
@@ -124,6 +200,25 @@ class WindowingTests(unittest.TestCase):
                 process_window_response(
                     profile,
                     '[{"row":2,"status":"OK"}]',
+                    [WindowSourceRow(row=2, source="a")],
+                )
+
+    def test_rejects_duplicate_status_json_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = self._profile(
+                tmpdir,
+                "id: qa\n"
+                "mode: status-json\n"
+                "output:\n"
+                "  fields:\n"
+                "    - status\n"
+                "    - reason\n",
+            )
+
+            with self.assertRaisesRegex(ModelProviderError, "duplicate key.*status"):
+                process_window_response(
+                    profile,
+                    '[{"row":2,"status":"OK","status":"BAD","reason":"Fine"}]',
                     [WindowSourceRow(row=2, source="a")],
                 )
 
