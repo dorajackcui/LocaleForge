@@ -45,6 +45,20 @@ Default request mode processes one unique source value per model request and may
 localeforge run --task tasks/rewrite.md --input data/source.csv --json
 ```
 
+If a run is interrupted, repeat the same command with `--resume`:
+
+```powershell
+localeforge run --task tasks/rewrite.md --input data/source.csv --resume --json
+```
+
+For folder runs, `--resume` skips completed output files and continues incomplete files from snapshots stored next to the outputs:
+
+```powershell
+localeforge run --task tasks/rewrite.md --input data/raw --output-dir data/out --resume --json
+```
+
+If LocaleForge finds an interrupted snapshot without `--resume`, it stops before model calls. Use `--force` when you want to discard snapshots and rerun.
+
 For adjacent rows that need shared context, declare window mode in the task front matter:
 
 ```yaml

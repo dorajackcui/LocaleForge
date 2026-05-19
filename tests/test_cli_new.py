@@ -143,6 +143,27 @@ class CliTests(unittest.TestCase):
         self.assertEqual(captured["request_mode"], "window")
         self.assertEqual(captured["window_size"], 3)
 
+    def test_run_resume_json_reports_resume_state(self) -> None:
+        self._write_api_env()
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\nmode: transform\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with patch("localeforge.cli._create_client_for_effective_config", return_value=StaticModelClient({"hello": "bonjour"})):
+            with redirect_stdout(stdout):
+                code = main(["run", "--task", str(task), "--input", str(source), "--resume", "--json"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["resume"]["enabled"])
+        self.assertEqual(payload["resume"]["rows_resumed"], 0)
+        self.assertEqual(payload["resume"]["files_skipped"], 0)
+        self.assertEqual(payload["files"][0]["rows_resumed"], 0)
+        self.assertIn(".localeforge-snapshots", payload["files"][0]["snapshot"])
+        self.assertFalse(payload["files"][0]["skipped_existing_output"])
+
     def test_run_uses_task_request_metadata_by_default(self) -> None:
         self._write_api_env()
         task = Path("task.md")

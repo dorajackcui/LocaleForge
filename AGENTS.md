@@ -60,6 +60,14 @@ Run a folder:
 localeforge run --task tasks/rewrite.md --input data/raw --output-dir data/out --report reports/run.json --json
 ```
 
+Resume an interrupted run by repeating the same run command with `--resume`:
+
+```powershell
+localeforge run --task tasks/rewrite.md --input data/raw --output-dir data/out --report reports/run.json --resume --json
+```
+
+LocaleForge saves snapshots under `.localeforge-snapshots` next to the output files. Completed files in a folder run are skipped during `--resume`; incomplete files continue from their snapshots. If a snapshot exists and `--resume` is not used, LocaleForge stops before model calls. Use `--force` only when you want to discard old snapshots and rerun outputs.
+
 Use different columns:
 
 ```powershell
@@ -100,6 +108,11 @@ With `--json`, stdout is a run report. Parse stdout as JSON.
     "mode": "concurrent",
     "window_size": 5
   },
+  "resume": {
+    "enabled": false,
+    "rows_resumed": 0,
+    "files_skipped": 0
+  },
   "files": [
     {
       "input": "data/source.csv",
@@ -107,7 +120,10 @@ With `--json`, stdout is a run report. Parse stdout as JSON.
       "rows_processed": 10,
       "rows_empty": 1,
       "model_calls": 8,
-      "cache_hits": 2
+      "cache_hits": 2,
+      "rows_resumed": 0,
+      "snapshot": "data/.localeforge-snapshots/source_rewrite.csv.snapshot.json",
+      "skipped_existing_output": false
     }
   ]
 }
@@ -145,6 +161,8 @@ Use:
 - Do not combine `--concurrency` with effective `window` mode.
 - Do not combine `--window-size` with the default `concurrent` request mode.
 - Use `--tips` for one-off instructions; do not edit a task file for one batch.
+- Use `--resume` to continue an interrupted run; repeat the same task/input/output command.
+- Use `--force` to overwrite outputs and discard matching snapshots.
 - For folder runs, `--output-dir` must be outside the input directory.
 - Output and report files must not already exist unless `--force` is used.
 - `--report` must not point at an input or output table file.

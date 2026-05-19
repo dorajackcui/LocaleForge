@@ -10,7 +10,19 @@ from .inputs import WorkItem, discover_work_items
 from .modes import ProcessedResult, process_model_response
 from .progress import ProgressReporter
 from .providers import ModelClient
-from .report import FileReport, ModelReport, RequestReport, RunReport, TaskReport
+from .report import FileReport, ModelReport, RequestReport, ResumeReport, RunReport, TaskReport
+from .snapshots import (
+    RunSnapshot,
+    SnapshotDescriptor,
+    SnapshotRow,
+    assert_snapshot_compatible,
+    delete_snapshot,
+    fingerprint_path,
+    load_snapshot,
+    save_snapshot,
+    snapshot_exists,
+    snapshot_path_for,
+)
 from .tabular import Table, load_table
 from .task_profile import TaskProfile
 from .windowing import (
@@ -38,6 +50,7 @@ class RunOptions:
     tips: str | None = None
     request_mode: str = "concurrent"
     window_size: int = 5
+    resume: bool = False
 
 
 def validate_task(profile: TaskProfile, task_path: Path, options: RunOptions) -> RunReport:
@@ -90,7 +103,7 @@ def run_task(
         options.output_dir,
         options.output_path,
         output_suffix=profile.id,
-        allow_overwrite=options.allow_overwrite_output,
+        allow_overwrite=options.allow_overwrite_output or options.resume,
     )
     report = _new_report(profile, task_path, options)
     cache: dict[str, ProcessedResult] = {}
@@ -98,13 +111,16 @@ def run_task(
 
     for file_index, item in enumerate(items, start=1):
         try:
-            file_report = _run_file(profile, options, item, client, cache, progress, file_index, len(items))
-            report.files.append(file_report)
+            if options.resume and item.output.exists() and not snapshot_exists(item.output):
+                _append_file_report(report, _skipped_existing_output_file(profile, options, item))
+                continue
+            file_report = _run_file(profile, task_path, options, item, client, cache, progress, file_index, len(items))
+            _append_file_report(report, file_report)
         except Exception as exc:
             if len(items) == 1:
                 raise
             errors.append(str(exc))
-            report.files.append(_failed_file(item, exc))
+            _append_file_report(report, _failed_file(item, exc))
 
     if errors:
         report.status = "partial_failure"
@@ -114,6 +130,7 @@ def run_task(
 
 def _run_file(
     profile: TaskProfile,
+    task_path: Path,
     options: RunOptions,
     item: WorkItem,
     client: ModelClient,
@@ -127,6 +144,8 @@ def _run_file(
     target_col: int | None = None
     if profile.mode == "transform":
         target_col = table.resolve_column(options.output_col or profile.output.column, create=profile.output.create)
+    descriptor = _snapshot_descriptor(profile, task_path, options, item)
+    snapshot = _prepare_snapshot(descriptor, options)
 
     if options.request_mode == "window":
         return _run_file_window(
@@ -134,6 +153,7 @@ def _run_file(
             options,
             item,
             client,
+            snapshot,
             table,
             source_col,
             target_col,
@@ -147,6 +167,7 @@ def _run_file(
         item,
         client,
         cache,
+        snapshot,
         table,
         source_col,
         target_col,
@@ -162,6 +183,7 @@ def _run_file_concurrent(
     item: WorkItem,
     client: ModelClient,
     cache: dict[str, ProcessedResult],
+    snapshot: RunSnapshot,
     table: Table,
     source_col: int,
     target_col: int | None,
@@ -170,14 +192,32 @@ def _run_file_concurrent(
     file_count: int,
 ) -> FileReport:
     rows_total = max(table.max_row - profile.input.start_row + 1, 0)
-    file_report = FileReport(status="success", input=item.input, output=item.output, rows_total=rows_total)
+    file_report = FileReport(
+        status="success",
+        input=item.input,
+        output=item.output,
+        rows_total=rows_total,
+        snapshot=snapshot_path_for(item.output),
+    )
     if progress:
         progress.file_start(file_index, file_count, item.input, rows_total)
 
     results_by_row: dict[int, ProcessedResult] = {}
+    for row_idx, snapshot_row in sorted(snapshot.completed_rows.items()):
+        source_text = table.get_cell(row_idx, source_col)
+        if not source_text:
+            continue
+        processed = _processed_from_snapshot_row(snapshot_row)
+        results_by_row[row_idx] = processed
+        cache[source_text] = processed
+        file_report.rows_resumed += 1
+        file_report.rows_processed += 1
+
     pending: dict[str, list[int]] = {}
-    rows_done = 0
+    rows_done = file_report.rows_resumed
     for row_idx in range(profile.input.start_row, table.max_row + 1):
+        if row_idx in results_by_row:
+            continue
         source_text = table.get_cell(row_idx, source_col)
         if not source_text:
             file_report.rows_empty += 1
@@ -185,7 +225,10 @@ def _run_file_concurrent(
             continue
 
         if source_text in cache:
-            results_by_row[row_idx] = cache[source_text]
+            processed = cache[source_text]
+            results_by_row[row_idx] = processed
+            snapshot.completed_rows[row_idx] = _snapshot_row_from_processed(processed)
+            save_snapshot(snapshot)
             file_report.cache_hits += 1
             file_report.rows_processed += 1
             rows_done += 1
@@ -204,6 +247,8 @@ def _run_file_concurrent(
         rows_done += len(row_indices)
         for row_idx in row_indices:
             results_by_row[row_idx] = processed
+            snapshot.completed_rows[row_idx] = _snapshot_row_from_processed(processed)
+        save_snapshot(snapshot)
         _emit_progress(progress, file_index, file_count, item.input, rows_done, rows_total, file_report)
 
     for row_idx in sorted(results_by_row):
@@ -216,6 +261,7 @@ def _run_file_concurrent(
                 table.set_cell(row_idx, target_col, processed.primary)
 
     table.save(item.output)
+    delete_snapshot(item.output)
     if progress:
         progress.file_done(file_index, file_count, item.input, rows_total, file_report.model_calls, file_report.cache_hits)
     return file_report
@@ -226,6 +272,7 @@ def _run_file_window(
     options: RunOptions,
     item: WorkItem,
     client: ModelClient,
+    snapshot: RunSnapshot,
     table: Table,
     source_col: int,
     target_col: int | None,
@@ -234,7 +281,13 @@ def _run_file_window(
     file_count: int,
 ) -> FileReport:
     rows_total = max(table.max_row - profile.input.start_row + 1, 0)
-    file_report = FileReport(status="success", input=item.input, output=item.output, rows_total=rows_total)
+    file_report = FileReport(
+        status="success",
+        input=item.input,
+        output=item.output,
+        rows_total=rows_total,
+        snapshot=snapshot_path_for(item.output),
+    )
     if progress:
         progress.file_start(file_index, file_count, item.input, rows_total)
 
@@ -247,18 +300,32 @@ def _run_file_window(
         source_rows.append(WindowSourceRow(row=row_idx, source=source_text))
 
     results_by_row: dict[int, ProcessedResult] = {}
-    rows_done = file_report.rows_empty
+    for source_row in source_rows:
+        snapshot_row = snapshot.completed_rows.get(source_row.row)
+        if snapshot_row is None:
+            continue
+        results_by_row[source_row.row] = _processed_from_snapshot_row(snapshot_row)
+        file_report.rows_resumed += 1
+        file_report.rows_processed += 1
+
+    rows_done = file_report.rows_empty + file_report.rows_resumed
     for start in range(0, len(source_rows), options.window_size):
         current = source_rows[start : start + options.window_size]
+        missing_count = sum(1 for row in current if row.row not in results_by_row)
+        if missing_count == 0:
+            continue
         previous_rows = source_rows[max(0, start - options.window_size) : start]
         next_rows = source_rows[start + options.window_size : start + (options.window_size * 2)]
         previous = [_window_previous_item(row, results_by_row[row.row]) for row in previous_rows if row.row in results_by_row]
 
         processed_by_row, attempts = _generate_window(profile, options, client, previous, current, next_rows)
         results_by_row.update(processed_by_row)
+        for row_idx, processed in processed_by_row.items():
+            snapshot.completed_rows[row_idx] = _snapshot_row_from_processed(processed)
+        save_snapshot(snapshot)
         file_report.model_calls += attempts
-        file_report.rows_processed += len(current)
-        rows_done += len(current)
+        file_report.rows_processed += missing_count
+        rows_done += missing_count
         _emit_progress(progress, file_index, file_count, item.input, rows_done, rows_total, file_report)
 
     for row_idx in sorted(results_by_row):
@@ -270,6 +337,7 @@ def _run_file_window(
             table.set_cell(row_idx, target_col, processed.primary)
 
     table.save(item.output)
+    delete_snapshot(item.output)
     if progress:
         progress.file_done(file_index, file_count, item.input, rows_total, file_report.model_calls, file_report.cache_hits)
     return file_report
@@ -494,6 +562,7 @@ def _new_report(profile: TaskProfile, task_path: Path, options: RunOptions) -> R
         task=TaskReport(id=profile.id, mode=profile.mode, path=task_path),
         model=ModelReport(execution_mode=options.execution_mode, provider=options.provider, name=options.model),
         request=RequestReport(mode=options.request_mode, window_size=options.window_size),
+        resume=ResumeReport(enabled=options.resume),
     )
 
 
@@ -502,8 +571,80 @@ def _failed_file(item: WorkItem, error: BaseException) -> FileReport:
         status="error",
         input=item.input,
         output=item.output,
+        snapshot=snapshot_path_for(item.output),
         errors=[str(error)],
     )
+
+
+def _skipped_existing_output_file(profile: TaskProfile, options: RunOptions, item: WorkItem) -> FileReport:
+    table = _load_for_profile(item.input, profile, options)
+    rows_total = max(table.max_row - profile.input.start_row + 1, 0)
+    return FileReport(
+        status="success",
+        input=item.input,
+        output=item.output,
+        rows_total=rows_total,
+        snapshot=snapshot_path_for(item.output),
+        skipped_existing_output=True,
+    )
+
+
+def _append_file_report(report: RunReport, file_report: FileReport) -> None:
+    report.files.append(file_report)
+    report.resume.rows_resumed += file_report.rows_resumed
+    if file_report.skipped_existing_output:
+        report.resume.files_skipped += 1
+
+
+def _snapshot_descriptor(
+    profile: TaskProfile,
+    task_path: Path,
+    options: RunOptions,
+    item: WorkItem,
+) -> SnapshotDescriptor:
+    return SnapshotDescriptor(
+        task_id=profile.id,
+        task_mode=profile.mode,
+        task_fingerprint=fingerprint_path(task_path),
+        input_path=item.input,
+        input_fingerprint=fingerprint_path(item.input),
+        output_path=item.output,
+        request_mode=options.request_mode,
+        window_size=options.window_size,
+        model_name=options.model,
+        provider_id=options.provider,
+        sheet=options.sheet or profile.input.sheet,
+        input_column=options.input_col or profile.input.column,
+        output_column=options.output_col or profile.output.column if profile.mode == "transform" else None,
+        output_fields=tuple(profile.output.fields),
+        output_columns=tuple(sorted(profile.output.columns.items())),
+    )
+
+
+def _prepare_snapshot(descriptor: SnapshotDescriptor, options: RunOptions) -> RunSnapshot:
+    if options.allow_overwrite_output:
+        delete_snapshot(descriptor.output_path)
+        return RunSnapshot.new(descriptor)
+
+    path = snapshot_path_for(descriptor.output_path)
+    if not path.exists():
+        return RunSnapshot.new(descriptor)
+
+    snapshot = load_snapshot(path)
+    if not options.resume:
+        raise InputOutputError(
+            f"Snapshot exists for an interrupted run: {path}. Use --resume to continue or --force to discard it."
+        )
+    assert_snapshot_compatible(snapshot, descriptor)
+    return snapshot
+
+
+def _processed_from_snapshot_row(row: SnapshotRow) -> ProcessedResult:
+    return ProcessedResult(primary=row.primary, fields=dict(row.fields))
+
+
+def _snapshot_row_from_processed(processed: ProcessedResult) -> SnapshotRow:
+    return SnapshotRow(primary=processed.primary, fields=dict(processed.fields))
 
 
 def raise_for_report(report: RunReport) -> None:

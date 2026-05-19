@@ -9,9 +9,19 @@ from io import StringIO
 from pathlib import Path
 
 from localeforge.engine import RunOptions, run_task, validate_task
-from localeforge.errors import ConfigError, ModelProviderError
+from localeforge.errors import ConfigError, InputOutputError, ModelProviderError
 from localeforge.progress import ProgressReporter
 from localeforge.providers import StaticModelClient
+from localeforge.snapshots import (
+    RunSnapshot,
+    SnapshotDescriptor,
+    SnapshotRow,
+    fingerprint_path,
+    load_snapshot,
+    save_snapshot,
+    snapshot_exists,
+    snapshot_path_for,
+)
 from localeforge.task_profile import load_task_profile
 
 
@@ -117,6 +127,206 @@ class EngineTests(unittest.TestCase):
             output_text = report.files[0].output.read_text(encoding="utf-8")
             self.assertIn("A", output_text)
             self.assertIn("D", output_text)
+
+    def test_concurrent_run_saves_snapshot_before_later_model_failure(self) -> None:
+        class FailAfterFirstClient:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def ensure_available(self) -> list[str]:
+                return ["fail-after-first"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls.append(user_text)
+                if user_text == "a":
+                    return "A"
+                raise ModelProviderError("boom")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\nb\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            output_path = Path(tmpdir) / "a_proofread.csv"
+            client = FailAfterFirstClient()
+
+            with self.assertRaisesRegex(ModelProviderError, "boom"):
+                run_task(profile, task_path, RunOptions(input_path=input_path, max_attempts=1), client)
+
+            snapshot = load_snapshot(snapshot_path_for(output_path))
+            self.assertEqual(snapshot.completed_rows[2].primary, "A")
+            self.assertNotIn(3, snapshot.completed_rows)
+
+    def test_concurrent_resume_uses_snapshot_without_repeating_completed_calls(self) -> None:
+        class FailAfterFirstClient:
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                if user_text == "a":
+                    return "A"
+                raise ModelProviderError("boom")
+
+        class ResumeClient:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def ensure_available(self) -> list[str]:
+                return ["resume"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls.append(user_text)
+                if user_text == "a":
+                    raise AssertionError("resumed row should not be requested again")
+                return "B"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\nb\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+
+            with self.assertRaises(ModelProviderError):
+                run_task(profile, task_path, RunOptions(input_path=input_path, max_attempts=1), FailAfterFirstClient())
+
+            client = ResumeClient()
+            report = run_task(profile, task_path, RunOptions(input_path=input_path, resume=True), client)
+
+            self.assertEqual(client.calls, ["b"])
+            self.assertEqual(report.files[0].rows_resumed, 1)
+            self.assertEqual(report.resume.rows_resumed, 1)
+            self.assertEqual(report.files[0].model_calls, 1)
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("A", output_text)
+            self.assertIn("B", output_text)
+            self.assertFalse(snapshot_exists(report.files[0].output))
+
+    def test_concurrent_resume_snapshots_duplicate_rows_filled_from_resumed_cache(self) -> None:
+        class FailOnPendingClient:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls.append(user_text)
+                raise ModelProviderError("boom")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\na\nb\n", encoding="utf-8")
+            resolved_input = input_path.resolve()
+            output_path = (Path(tmpdir) / "a_proofread.csv").resolve()
+            profile = load_task_profile(task_path)
+            snapshot = RunSnapshot.new(
+                SnapshotDescriptor(
+                    task_id="proofread",
+                    task_mode="transform",
+                    task_fingerprint=fingerprint_path(task_path),
+                    input_path=resolved_input,
+                    input_fingerprint=fingerprint_path(input_path),
+                    output_path=output_path,
+                    request_mode="concurrent",
+                    window_size=5,
+                    model_name="",
+                    provider_id=None,
+                    sheet=None,
+                    input_column="source",
+                    output_column="target",
+                )
+            )
+            snapshot.completed_rows[2] = SnapshotRow(primary="A", fields={})
+            save_snapshot(snapshot)
+
+            with self.assertRaisesRegex(ModelProviderError, "boom"):
+                run_task(
+                    profile,
+                    task_path,
+                    RunOptions(input_path=input_path, resume=True, max_attempts=1),
+                    FailOnPendingClient(),
+                )
+
+            updated = load_snapshot(snapshot_path_for(output_path))
+            self.assertEqual(updated.completed_rows[3].primary, "A")
+
+    def test_stale_snapshot_without_resume_fails_before_model_calls(self) -> None:
+        class CountingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def ensure_available(self) -> list[str]:
+                return ["counting"]
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls += 1
+                return user_text.upper()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\n", encoding="utf-8")
+            output_path = Path(tmpdir) / "a_proofread.csv"
+            save_snapshot(
+                RunSnapshot.new(
+                    SnapshotDescriptor(
+                        task_id="other",
+                        task_mode="transform",
+                        task_fingerprint="different",
+                        input_path=input_path,
+                        input_fingerprint="different",
+                        output_path=output_path,
+                        request_mode="concurrent",
+                        window_size=5,
+                        model_name="model",
+                        provider_id=None,
+                        sheet=None,
+                        input_column="source",
+                        output_column="target",
+                    )
+                )
+            )
+            profile = load_task_profile(task_path)
+            client = CountingClient()
+
+            with self.assertRaisesRegex(InputOutputError, "--resume"):
+                run_task(profile, task_path, RunOptions(input_path=input_path), client)
+
+            self.assertEqual(client.calls, 0)
+
+    def test_force_discards_snapshot_and_reruns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\n", encoding="utf-8")
+            output_path = Path(tmpdir) / "a_proofread.csv"
+            save_snapshot(
+                RunSnapshot.new(
+                    SnapshotDescriptor(
+                        task_id="other",
+                        task_mode="transform",
+                        task_fingerprint="different",
+                        input_path=input_path,
+                        input_fingerprint="different",
+                        output_path=output_path,
+                        request_mode="concurrent",
+                        window_size=5,
+                        model_name="model",
+                        provider_id=None,
+                        sheet=None,
+                        input_column="source",
+                        output_column="target",
+                    )
+                )
+            )
+            profile = load_task_profile(task_path)
+            client = StaticModelClient({"a": "A"})
+
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, allow_overwrite_output=True),
+                client,
+            )
+
+            self.assertEqual(report.status, "success")
+            self.assertEqual(client.call_count, 1)
+            self.assertFalse(snapshot_exists(output_path))
 
     def test_progress_streams_as_model_calls_finish(self) -> None:
         class BlockingClient:
@@ -328,6 +538,93 @@ class EngineTests(unittest.TestCase):
             output_text = report.files[0].output.read_text(encoding="utf-8")
             self.assertIn("status,reason", output_text)
             self.assertNotIn("extra", output_text)
+
+    def test_window_resume_starts_after_completed_window(self) -> None:
+        class FailingSecondWindowClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                self.calls += 1
+                payload = json.loads(user_text)
+                if self.calls > 1:
+                    raise ModelProviderError("boom")
+                return json.dumps(
+                    [{"row": item["row"], "target": item["source"].upper()} for item in payload["current"]],
+                    ensure_ascii=False,
+                )
+
+        class ResumeWindowClient:
+            def __init__(self) -> None:
+                self.payloads: list[dict[str, object]] = []
+
+            def generate(self, system_prompt: str, user_text: str) -> str:
+                payload = json.loads(user_text)
+                self.payloads.append(payload)
+                return json.dumps(
+                    [{"row": item["row"], "target": item["source"].upper()} for item in payload["current"]],
+                    ensure_ascii=False,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_path = Path(tmpdir) / "a.csv"
+            input_path.write_text("source\na\nb\nc\nd\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+
+            with self.assertRaisesRegex(ModelProviderError, "boom"):
+                run_task(
+                    profile,
+                    task_path,
+                    RunOptions(input_path=input_path, request_mode="window", window_size=2, max_attempts=1),
+                    FailingSecondWindowClient(),
+                )
+
+            client = ResumeWindowClient()
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_path, request_mode="window", window_size=2, resume=True),
+                client,
+            )
+
+            self.assertEqual(len(client.payloads), 1)
+            self.assertEqual([item["source"] for item in client.payloads[0]["current"]], ["c", "d"])
+            self.assertEqual(client.payloads[0]["previous"][0]["target"], "A")
+            self.assertEqual(client.payloads[0]["previous"][1]["target"], "B")
+            self.assertEqual(report.files[0].rows_resumed, 2)
+            self.assertEqual(report.resume.rows_resumed, 2)
+            output_text = report.files[0].output.read_text(encoding="utf-8")
+            self.assertIn("A", output_text)
+            self.assertIn("D", output_text)
+            self.assertFalse(snapshot_exists(report.files[0].output))
+
+    def test_folder_resume_skips_existing_completed_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = self.write_task(tmpdir)
+            input_root = Path(tmpdir) / "raw"
+            input_root.mkdir()
+            (input_root / "a.csv").write_text("source\na\n", encoding="utf-8")
+            (input_root / "b.csv").write_text("source\nb\n", encoding="utf-8")
+            output_root = Path(tmpdir) / "out"
+            output_root.mkdir()
+            (output_root / "a_proofread.csv").write_text("source,target\na,A\n", encoding="utf-8")
+            profile = load_task_profile(task_path)
+            client = StaticModelClient({"b": "B"})
+
+            report = run_task(
+                profile,
+                task_path,
+                RunOptions(input_path=input_root, output_dir=output_root, resume=True),
+                client,
+            )
+
+            self.assertEqual(report.status, "success")
+            self.assertEqual(report.resume.files_skipped, 1)
+            self.assertTrue(report.files[0].skipped_existing_output)
+            self.assertEqual(report.files[1].model_calls, 1)
+            self.assertEqual(client.call_count, 1)
+            self.assertIn("B", (output_root / "b_proofread.csv").read_text(encoding="utf-8"))
 
     def test_window_mode_transforms_rows_in_ordered_batches(self) -> None:
         class WindowClient:

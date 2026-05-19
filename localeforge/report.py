@@ -53,6 +53,20 @@ class RequestReport:
 
 
 @dataclass
+class ResumeReport:
+    enabled: bool = False
+    rows_resumed: int = 0
+    files_skipped: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "rows_resumed": self.rows_resumed,
+            "files_skipped": self.files_skipped,
+        }
+
+
+@dataclass
 class FileReport:
     status: str
     input: Path
@@ -62,6 +76,9 @@ class FileReport:
     rows_empty: int = 0
     model_calls: int = 0
     cache_hits: int = 0
+    rows_resumed: int = 0
+    snapshot: Path | None = None
+    skipped_existing_output: bool = False
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +91,9 @@ class FileReport:
             "rows_empty": self.rows_empty,
             "model_calls": self.model_calls,
             "cache_hits": self.cache_hits,
+            "rows_resumed": self.rows_resumed,
+            "snapshot": _path_value(self.snapshot),
+            "skipped_existing_output": self.skipped_existing_output,
             "errors": list(self.errors),
         }
 
@@ -86,6 +106,7 @@ class RunReport:
     files: list[FileReport] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     request: RequestReport = field(default_factory=RequestReport)
+    resume: ResumeReport = field(default_factory=ResumeReport)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +114,7 @@ class RunReport:
             "task": self.task.to_dict(),
             "model": self.model.to_dict(),
             "request": self.request.to_dict(),
+            "resume": self.resume.to_dict(),
             "files": [item.to_dict() for item in self.files],
             "errors": list(self.errors),
         }
