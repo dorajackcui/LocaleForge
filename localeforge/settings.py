@@ -157,14 +157,12 @@ def settings_to_public_dict(settings: AppSettings) -> dict[str, Any]:
     return payload
 
 
-def load_local_env(path: Path | str | None = None) -> bool:
+def read_local_env_values(path: Path | str | None = None) -> dict[str, str]:
     target = Path(path).expanduser().resolve() if path is not None else (Path.cwd() / ".env").resolve()
-    if target in _LOADED_ENV_FILES:
-        return target.exists()
-    _LOADED_ENV_FILES.add(target)
     if not target.exists():
-        return False
+        return {}
 
+    values: dict[str, str] = {}
     for line in target.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -175,9 +173,24 @@ def load_local_env(path: Path | str | None = None) -> bool:
             continue
         key, value = stripped.split("=", maxsplit=1)
         key = key.strip()
-        if not key or key in os.environ:
+        if key:
+            values[key] = _clean_env_value(value)
+    return values
+
+
+def load_local_env(path: Path | str | None = None) -> bool:
+    target = Path(path).expanduser().resolve() if path is not None else (Path.cwd() / ".env").resolve()
+    if target in _LOADED_ENV_FILES:
+        return target.exists()
+    _LOADED_ENV_FILES.add(target)
+    values = read_local_env_values(target)
+    if not values:
+        return False
+
+    for key, value in values.items():
+        if key in os.environ:
             continue
-        os.environ[key] = _clean_env_value(value)
+        os.environ[key] = value
     return True
 
 

@@ -20,6 +20,7 @@ from .settings import (
     get_provider,
     load_local_env,
     load_settings,
+    read_local_env_values,
     resolve_base_url,
     resolve_api_key,
     save_settings,
@@ -407,17 +408,18 @@ def _resolve_effective_model_config(
 
 
 def _provider_from_env() -> ProviderConfig | None:
+    local_env = read_local_env_values()
     load_local_env()
-    base_url = os.environ.get(ENV_BASE_URL, "").strip()
-    api_key = os.environ.get(ENV_API_KEY, "").strip()
-    model = os.environ.get(ENV_MODEL, "").strip()
+    base_url = (local_env.get(ENV_BASE_URL) or os.environ.get(ENV_BASE_URL, "")).strip()
+    api_key = (local_env.get(ENV_API_KEY) or os.environ.get(ENV_API_KEY, "")).strip()
+    model = (local_env.get(ENV_MODEL) or os.environ.get(ENV_MODEL, "")).strip()
     if not (base_url or api_key):
         return None
     return ProviderConfig(
         provider_id=ENV_PROVIDER_ID,
-        base_url="",
+        base_url=base_url,
         base_url_env=ENV_BASE_URL,
-        api_key="",
+        api_key=api_key,
         api_key_env=ENV_API_KEY,
         default_model=model,
         models=[model] if model else [],

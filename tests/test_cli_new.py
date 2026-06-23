@@ -553,6 +553,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["model"]["provider"], "env")
         self.assertEqual(payload["model"]["name"], "env-default")
 
+    def test_env_provider_prefers_local_env_file_model_over_exported_model(self) -> None:
+        os.environ["OPENAI_MODEL"] = "exported-default"
+        Path(".env").write_text(
+            "OPENAI_BASE_URL=https://api.example.com/v1\n"
+            "OPENAI_API_KEY=secret\n"
+            "OPENAI_MODEL=file-default\n",
+            encoding="utf-8",
+        )
+        task = Path("task.md")
+        task.write_text("---\nid: proofread\n---\n\nPolish.\n", encoding="utf-8")
+        source = Path("source.csv")
+        source.write_text("source\nhello\n", encoding="utf-8")
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(["validate", "--task", str(task), "--input", str(source), "--json"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["model"]["execution_mode"], "api")
+        self.assertEqual(payload["model"]["provider"], "env")
+        self.assertEqual(payload["model"]["name"], "file-default")
+
     def test_legacy_local_default_model_does_not_override_env_default_model(self) -> None:
         settings_path = Path(os.environ["LOCALEFORGE_SETTINGS_PATH"])
         settings_path.write_text(

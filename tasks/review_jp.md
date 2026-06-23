@@ -8,6 +8,9 @@ output:
     - status
     - problem_review
     - better_japanese
+request:
+  mode: window
+  window_size: 5
 ---
 
 You are not a proofreader.
